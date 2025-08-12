@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finance & Recruiting Dashboard - TECHGENE</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <!-- Navigation Bar -->
+    <nav class="navbar">
+        <div class="logo-container">
+            <img src="{{ url_for('static', filename='techgene-logo-new.png') }}" alt="TECHGENE" class="logo-image">
+        </div>
+        <div class="nav-actions">
+            <div class="nav-button active">Dashboard</div>
+            <div class="nav-button">Reports</div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="section-title">Upload Data</div>
+            
+            <div class="upload-section">
+                <label>Profit & Loss CSV</label>
+                <div class="file-upload" id="pl-upload">
+                    <div class="upload-area">
+                        <div class="upload-text">Drag and drop file here</div>
+                        <div class="upload-limit">Limit 200MB per file • CSV</div>
+                        <button class="browse-btn">Browse files</button>
+                    </div>
+                    <input type="file" accept=".csv" style="display: none;" data-type="pl">
+                </div>
+            </div>
+
+            <div class="upload-section">
+                <label>Balance Sheet CSV</label>
+                <div class="file-upload" id="bs-upload">
+                    <div class="upload-area">
+                        <div class="upload-text">Drag and drop file here</div>
+                        <div class="upload-limit">Limit 200MB per file • CSV</div>
+                        <button class="browse-btn">Browse files</button>
+                    </div>
+                    <input type="file" accept=".csv" style="display: none;" data-type="bs">
+                </div>
+            </div>
+
+            <div class="upload-section">
+                <label>Recruitment CSV</label>
+                <div class="file-upload" id="rec-upload">
+                    <div class="upload-area">
+                        <div class="upload-text">Drag and drop file here</div>
+                        <div class="upload-limit">Limit 200MB per file • CSV</div>
+                        <button class="browse-btn">Browse files</button>
+                    </div>
+                    <input type="file" accept=".csv" style="display: none;" data-type="rec">
+                </div>
+            </div>
+
+            <div class="upload-section">
+                <label>Margin Statement CSV</label>
+                <div class="file-upload" id="mg-upload">
+                    <div class="upload-area">
+                        <div class="upload-text">Drag and drop file here</div>
+                        <div class="upload-limit">Limit 200MB per file • CSV</div>
+                        <button class="browse-btn">Browse files</button>
+                    </div>
+                    <input type="file" accept=".csv" style="display: none;" data-type="mg">
+                </div>
+            </div>
+
+            <div class="section-divider"></div>
+            
+            <div class="section-title">Config</div>
+            <div class="config-section">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="include-config">
+                    <span>Include config in report</span>
+                </label>
+                <div class="file-upload" id="config-upload">
+                    <div class="upload-area">
+                        <div class="upload-text">Load saved config (JSON)</div>
+                        <button class="browse-btn">Browse files</button>
+                    </div>
+                    <input type="file" accept=".json" style="display: none;" data-type="config">
+                </div>
+            </div>
+
+            <div class="section-title">AI (optional)</div>
+            <div class="ai-section">
+                <input type="password" id="openai-key" placeholder="OpenAI API Key" class="input-field">
+                <input type="text" id="model-name" placeholder="Model" value="gpt-4o-mini" class="input-field">
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Column Mapping Section -->
+            <div class="section">
+                <div class="section-title">1) Map Columns</div>
+                
+                <div id="pl-mapping" class="mapping-section" style="display: none;">
+                    <div class="mapping-header">
+                        <h3>Profit & Loss – Column Mapping</h3>
+                        <div class="mapping-preview" id="pl-preview"></div>
+                    </div>
+                    <div class="mapping-controls">
+                        <div class="mapping-row">
+                            <div class="mapping-col">
+                                <label>Date / Period column</label>
+                                <select id="pl-date-col" class="select-field"></select>
+                            </div>
+                            <div class="mapping-col">
+                                <label>Revenue column(s)</label>
+                                <select id="pl-revenue-col" class="select-field" multiple></select>
+                            </div>
+                        </div>
+                        <div class="mapping-row">
+                            <div class="mapping-col">
+                                <label>COGS column(s)</label>
+                                <select id="pl-cogs-col" class="select-field" multiple></select>
+                            </div>
+                            <div class="mapping-col">
+                                <label>Opex column(s)</label>
+                                <select id="pl-opex-col" class="select-field" multiple></select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="bs-mapping" class="mapping-section" style="display: none;">
+                    <div class="mapping-header">
+                        <h3>Balance Sheet – Column Mapping</h3>
+                        <div class="mapping-preview" id="bs-preview"></div>
+                    </div>
+                    <div class="mapping-controls">
+                        <div class="mapping-row">
+                            <div class="mapping-col">
+                                <label>Date / Period column</label>
+                                <select id="bs-date-col" class="select-field"></select>
+                            </div>
+                            <div class="mapping-col">
+                                <label>Total Assets (or components)</label>
+                                <select id="bs-assets-col" class="select-field" multiple></select>
+                            </div>
+                        </div>
+                        <div class="mapping-row">
+                            <div class="mapping-col">
+                                <label>Total Liabilities (or components)</label>
+                                <select id="bs-liab-col" class="select-field" multiple></select>
+                            </div>
+                            <div class="mapping-col">
+                                <label>Equity (or components)</label>
+                                <select id="bs-equity-col" class="select-field" multiple></select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="rec-mapping" class="mapping-section" style="display: none;">
+                    <div class="mapping-header">
+                        <h3>Recruitment – Column Mapping</h3>
+                        <div class="mapping-preview" id="rec-preview"></div>
+                    </div>
+                    <div class="mapping-controls">
+                        <div class="mapping-row">
+                            <div class="mapping-col">
+                                <label>Date / Period column</label>
+                                <select id="rec-date-col" class="select-field"></select>
+                            </div>
+                            <div class="mapping-col">
+                                <label>Placements count</label>
+                                <select id="rec-placements-col" class="select-field"></select>
+                            </div>
+                        </div>
+                        <div class="mapping-row">
+                            <div class="mapping-col">
+                                <label>Revenue per period (optional)</label>
+                                <select id="rec-revenue-col" class="select-field"></select>
+                            </div>
+                            <div class="mapping-col">
+                                <label>Margin amount or % (optional)</label>
+                                <select id="rec-margin-col" class="select-field"></select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="mg-mapping" class="mapping-section" style="display: none;">
+                    <div class="mapping-header">
+                        <h3>Margin Statement – Column Mapping</h3>
+                        <div class="mapping-preview" id="mg-preview"></div>
+                    </div>
+                    <div class="mapping-controls">
+                        <div class="mapping-row">
+                            <div class="mapping-col">
+                                <label>Date / Period column</label>
+                                <select id="mg-date-col" class="select-field"></select>
+                            </div>
+                            <div class="mapping-col">
+                                <label>Margin amount (optional)</label>
+                                <select id="mg-amount-col" class="select-field"></select>
+                            </div>
+                        </div>
+                        <div class="mapping-row">
+                            <div class="mapping-col">
+                                <label>Margin % (optional)</label>
+                                <select id="mg-percent-col" class="select-field"></select>
+                            </div>
+                            <div class="mapping-col"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="no-data-message" class="info-message">
+                    Upload a P&L CSV in the sidebar to enable P&L visuals.
+                </div>
+            </div>
+
+            <!-- KPIs Section -->
+            <div class="section">
+                <div class="section-title">2) KPIs</div>
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-label">Revenue (last period)</div>
+                        <div class="kpi-value" id="kpi-revenue">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Gross Profit (last period)</div>
+                        <div class="kpi-value" id="kpi-gross-profit">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Net Income (last period)</div>
+                        <div class="kpi-value" id="kpi-net-income">—</div>
+                    </div>
+                    <div class="kpi-card">
+                        <div class="kpi-label">Assets − Liabilities</div>
+                        <div class="kpi-value" id="kpi-assets-liab">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Visuals Section -->
+            <div class="section">
+                <div class="section-title">3) Visuals</div>
+                <div id="charts-container">
+                    <div class="chart-row">
+                        <div class="chart-container">
+                            <h4>P&L – Revenue vs COGS vs Opex</h4>
+                            <div id="chart-pl-area"></div>
+                        </div>
+                        <div class="chart-container">
+                            <h4>Profit Walk (last period)</h4>
+                            <div id="chart-pl-waterfall"></div>
+                        </div>
+                    </div>
+                    <div class="chart-row">
+                        <div class="chart-container">
+                            <h4>Net Income Trend</h4>
+                            <div id="chart-pl-line"></div>
+                        </div>
+                        <div class="chart-container">
+                            <h4>Balance Sheet – Assets vs Liabilities</h4>
+                            <div id="chart-bs-line"></div>
+                        </div>
+                    </div>
+                    <div class="chart-row">
+                        <div class="chart-container">
+                            <h4>Equity Trend</h4>
+                            <div id="chart-bs-equity"></div>
+                        </div>
+                        <div class="chart-container">
+                            <h4>Recruitment – Placements per Month</h4>
+                            <div id="chart-rec-bar"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Export Section -->
+            <div class="section">
+                <div class="section-title">4) Export</div>
+                <div class="export-section">
+                    <button class="export-btn" id="download-report">
+                        <span class="export-icon">⬇️</span>
+                        Download HTML Report
+                    </button>
+                    <div class="export-tip">
+                        Tip: Save your mapping config and reuse it next time to skip setup.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html> 
