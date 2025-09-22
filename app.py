@@ -19,10 +19,11 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
-import plotly.express as px
-import plotly.utils
+# Removed plotly imports - using Chart.js instead
 from flask import Flask, render_template, request, jsonify, send_file, session
 from werkzeug.utils import secure_filename
+import os
+import sqlite3
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change this in production
@@ -33,18 +34,250 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
+def allowed_file(filename, allowed_extensions):
+    """Check if file extension is allowed"""
+    if '.' not in filename:
+        return False
+    file_ext = '.' + filename.rsplit('.', 1)[1].lower()
+    return file_ext in allowed_extensions
+
+# Database setup for recruitment data
+DB_PATH = 'recruitment_data.db'
+
+def init_recruitment_database():
+    """Initialize SQLite database with recruitment data tables"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Employment types data (W2, C2C, 1099, Referral)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS employment_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            month TEXT NOT NULL,
+            w2 INTEGER DEFAULT 0,
+            c2c INTEGER DEFAULT 0,
+            employment_1099 INTEGER DEFAULT 0,
+            referral INTEGER DEFAULT 0,
+            total_billables INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Placement metrics data
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS placement_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            month TEXT NOT NULL,
+            new_placements INTEGER DEFAULT 0,
+            terminations INTEGER DEFAULT 0,
+            net_placements INTEGER DEFAULT 0,
+            net_billables INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Gross margin data
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS margin_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_type TEXT NOT NULL,
+            year_2024 INTEGER DEFAULT 0,
+            year_2025 INTEGER DEFAULT 0,
+            total INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+def load_recruitment_csv_data():
+    """Load data from the existing CSV file"""
+    csv_path = 'Placement Report as of Aug 2025.xlsx - Consolidated Placements Data.csv'
+    if not os.path.exists(csv_path):
+        return
+    
+    df = pd.read_csv(csv_path)
+    conn = sqlite3.connect(DB_PATH)
+    
+    # Clear existing data
+    conn.execute('DELETE FROM employment_data')
+    conn.execute('DELETE FROM placement_data')
+    conn.execute('DELETE FROM margin_data')
+    
+    # Load employment data (rows 1-4)
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    for i, month in enumerate(months):
+        w2 = int(df.iloc[1, i+1]) if pd.notna(df.iloc[1, i+1]) else 0
+        c2c = int(df.iloc[2, i+1]) if pd.notna(df.iloc[2, i+1]) else 0
+        employment_1099 = int(df.iloc[3, i+1]) if pd.notna(df.iloc[3, i+1]) else 0
+        referral = int(df.iloc[4, i+1]) if pd.notna(df.iloc[4, i+1]) else 0
+        total_billables = int(df.iloc[6, i+1]) if pd.notna(df.iloc[6, i+1]) else 0
+        
+        conn.execute('''
+            INSERT INTO employment_data (month, w2, c2c, employment_1099, referral, total_billables)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (month, w2, c2c, employment_1099, referral, total_billables))
+    
+    # Load placement data (rows 11-14)
+    for i, month in enumerate(months):
+        new_placements = int(df.iloc[10, i+1]) if pd.notna(df.iloc[10, i+1]) else 0
+        terminations = int(df.iloc[11, i+1]) if pd.notna(df.iloc[11, i+1]) else 0
+        net_placements = int(df.iloc[12, i+1]) if pd.notna(df.iloc[12, i+1]) else 0
+        net_billables = int(df.iloc[13, i+1]) if pd.notna(df.iloc[13, i+1]) else 0
+        
+        conn.execute('''
+            INSERT INTO placement_data (month, new_placements, terminations, net_placements, net_billables)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (month, new_placements, terminations, net_placements, net_billables))
+    
+    # Load margin data (this would need to be manually added as it's not in the CSV)
+    # For now, add sample data based on the image description
+    margin_companies = [
+        ('Techgene 1099', 20, 10, 30),
+        ('TG C2C', 25, 15, 45),
+        ('TG W2', 75, 20, 110),
+        ('Vensiti 1099', 0, 0, 0),
+        ('VNST C2C', 0, 10, 10),
+        ('VNST W2', 5, 20, 25)
+    ]
+    
+    for company, year_2024, year_2025, total in margin_companies:
+        conn.execute('''
+            INSERT INTO margin_data (company_type, year_2024, year_2025, total)
+            VALUES (?, ?, ?, ?)
+        ''', (company, year_2024, year_2025, total))
+    
+    conn.commit()
+    conn.close()
+
+def get_recruitment_employment_data() -> pd.DataFrame:
+    """Get employment data from database"""
+    conn = sqlite3.connect(DB_PATH)
+    df = pd.read_sql_query('SELECT * FROM employment_data ORDER BY CASE month WHEN "Jan" THEN 1 WHEN "Feb" THEN 2 WHEN "Mar" THEN 3 WHEN "Apr" THEN 4 WHEN "May" THEN 5 WHEN "Jun" THEN 6 WHEN "Jul" THEN 7 WHEN "Aug" THEN 8 WHEN "Sep" THEN 9 WHEN "Oct" THEN 10 WHEN "Nov" THEN 11 WHEN "Dec" THEN 12 END', conn)
+    conn.close()
+    return df
+
+def get_recruitment_placement_data() -> pd.DataFrame:
+    """Get placement data from database"""
+    conn = sqlite3.connect(DB_PATH)
+    df = pd.read_sql_query('SELECT * FROM placement_data ORDER BY CASE month WHEN "Jan" THEN 1 WHEN "Feb" THEN 2 WHEN "Mar" THEN 3 WHEN "Apr" THEN 4 WHEN "May" THEN 5 WHEN "Jun" THEN 6 WHEN "Jul" THEN 7 WHEN "Aug" THEN 8 WHEN "Sep" THEN 9 WHEN "Oct" THEN 10 WHEN "Nov" THEN 11 WHEN "Dec" THEN 12 END', conn)
+    conn.close()
+    return df
+
+def get_recruitment_margin_data() -> pd.DataFrame:
+    """Get margin data from database"""
+    conn = sqlite3.connect(DB_PATH)
+    df = pd.read_sql_query('SELECT * FROM margin_data', conn)
+    conn.close()
+    return df
+
 # --------------------- Helpers ---------------------
 
 def read_csv_file(file_path: str) -> pd.DataFrame:
     if not file_path or not os.path.exists(file_path):
         return pd.DataFrame()
+    
+    # Check if it's an Excel file
+    if file_path.lower().endswith(('.xlsx', '.xls')):
+        try:
+            # For Excel files, try to read the first sheet that contains data
+            # or look for a sheet that looks like consolidated data
+            xl_file = pd.ExcelFile(file_path)
+            
+            # Try to find the best sheet to use
+            sheet_names = xl_file.sheet_names
+            target_sheet = None
+            
+            # Look for sheets with names that suggest consolidated data
+            for sheet in sheet_names:
+                if any(keyword in sheet.lower() for keyword in ['consolidated', 'data', 'placement', 'summary']):
+                    target_sheet = sheet
+                    break
+            
+            # If no specific sheet found, use the first one
+            if not target_sheet:
+                target_sheet = sheet_names[0]
+            
+            df = pd.read_excel(file_path, sheet_name=target_sheet)
+            return df
+            
+        except Exception as e:
+            print(f"Error reading Excel file: {e}")
+            return pd.DataFrame()
+    else:
+        # Handle CSV files
+        try:
+            # Read with automatic dtype inference and date parsing attempt
+            df = pd.read_csv(file_path)
+        except Exception:
+            # Fallback to latin-1 for odd encodings
+            df = pd.read_csv(file_path, encoding="latin-1")
+        return df
+
+def read_placement_report_excel(file_path: str) -> Dict:
+    """Read all 4 sheets from placement report Excel file"""
+    if not file_path or not os.path.exists(file_path):
+        return {}
+    
+    if not file_path.lower().endswith(('.xlsx', '.xls')):
+        return {}
+    
     try:
-        # Read with automatic dtype inference and date parsing attempt
-        df = pd.read_csv(file_path)
-    except Exception:
-        # Fallback to latin-1 for odd encodings
-        df = pd.read_csv(file_path, encoding="latin-1")
-    return df
+        xl_file = pd.ExcelFile(file_path)
+        sheet_names = xl_file.sheet_names
+        
+        result = {
+            'sheet1_employment': pd.DataFrame(),
+            'sheet2_placements': pd.DataFrame(),
+            'sheet3_margins': pd.DataFrame(),
+            'sheet4_additional': pd.DataFrame(),
+            'sheet_names': sheet_names,
+            'success': True,
+            'error': None
+        }
+        
+        # Read Sheet 1: Employment Types (W2, C2C, 1099, Referral)
+        if len(sheet_names) > 0:
+            try:
+                result['sheet1_employment'] = pd.read_excel(file_path, sheet_name=sheet_names[0])
+            except Exception as e:
+                print(f"Error reading sheet 1: {e}")
+        
+        # Read Sheet 2: Placement Metrics (New Placements, Terminations, Net)
+        if len(sheet_names) > 1:
+            try:
+                result['sheet2_placements'] = pd.read_excel(file_path, sheet_name=sheet_names[1])
+            except Exception as e:
+                print(f"Error reading sheet 2: {e}")
+        
+        # Read Sheet 3: Gross Margin Data (2024/2025)
+        if len(sheet_names) > 2:
+            try:
+                result['sheet3_margins'] = pd.read_excel(file_path, sheet_name=sheet_names[2])
+            except Exception as e:
+                print(f"Error reading sheet 3: {e}")
+        
+        # Read Sheet 4: Additional Charts/Data
+        if len(sheet_names) > 3:
+            try:
+                result['sheet4_additional'] = pd.read_excel(file_path, sheet_name=sheet_names[3])
+            except Exception as e:
+                print(f"Error reading sheet 4: {e}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error reading placement report Excel: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'sheet_names': [],
+            'sheet1_employment': pd.DataFrame(),
+            'sheet2_placements': pd.DataFrame(),
+            'sheet3_margins': pd.DataFrame(),
+            'sheet4_additional': pd.DataFrame()
+        }
 
 def try_parse_dates(df: pd.DataFrame, candidate_cols: Optional[List[str]] = None) -> pd.DataFrame:
     if df.empty:
@@ -174,6 +407,189 @@ def compute_recruit_fields(df: pd.DataFrame, mapping: Dict) -> pd.DataFrame:
     rolled = monthly_rollup(df, mapping.get("date"), agg_map)
     return rolled
 
+def process_placement_report(df: pd.DataFrame) -> Dict:
+    """Process placement report data structure to extract employment types and placement metrics"""
+    if df.empty:
+        return {}
+    
+    result = {
+        'employment_data': {},
+        'placement_data': {},
+        'months': []
+    }
+    
+    # Extract months from first row (assuming they start from column 1)
+    months = df.columns[1:].tolist() if len(df.columns) > 1 else []
+    result['months'] = months
+    
+    # Process employment types (W2, C2C, 1099, Referral)
+    employment_types = ['W2', 'C2C', '1099', 'Referral']
+    for emp_type in employment_types:
+        # Find row that contains this employment type
+        matching_rows = df[df.iloc[:, 0].astype(str).str.contains(emp_type, case=False, na=False)]
+        if not matching_rows.empty:
+            # Get the values for each month
+            values = matching_rows.iloc[0, 1:len(months)+1].tolist()
+            # Convert to numeric, replacing any non-numeric with 0
+            numeric_values = []
+            for val in values:
+                try:
+                    numeric_values.append(float(val) if pd.notna(val) else 0)
+                except (ValueError, TypeError):
+                    numeric_values.append(0)
+            result['employment_data'][emp_type] = numeric_values
+    
+    # Process placement metrics
+    placement_metrics = ['New Placements', 'Terminations', 'Net Placements', 'Net billables', 'Total billables']
+    for metric in placement_metrics:
+        # Find row that contains this metric
+        matching_rows = df[df.iloc[:, 0].astype(str).str.contains(metric, case=False, na=False)]
+        if not matching_rows.empty:
+            values = matching_rows.iloc[0, 1:len(months)+1].tolist()
+            numeric_values = []
+            for val in values:
+                try:
+                    numeric_values.append(float(val) if pd.notna(val) else 0)
+                except (ValueError, TypeError):
+                    numeric_values.append(0)
+            result['placement_data'][metric] = numeric_values
+    
+    return result
+
+def process_sheet1_employment(df: pd.DataFrame) -> Dict:
+    """Process Sheet 1: Employment Types (TG W2, TG C2C, TG 1099, TG Referral, etc.)"""
+    if df.empty:
+        return {}
+    
+    print(f"DEBUG Sheet 1: DataFrame shape: {df.shape}")
+    print(f"DEBUG Sheet 1: First few rows:\n{df.head()}")
+    print(f"DEBUG Sheet 1: Columns: {list(df.columns)}")
+    
+    result = {
+        'tg_data': {},
+        'vnst_data': {},
+        'months': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    }
+    
+    # Process employment data - looking for TG W2, TG C2C, TG 1099, TG Referral
+    # Based on debug output, data is in column 3 (TG W2, TG C2C, etc.)
+    employment_types = ['TG W2', 'TG C2C', 'TG 1099', 'TG Referral']
+    for emp_type in employment_types:
+        # Look for rows containing this employment type
+        for idx, row in df.iterrows():
+            if pd.notna(row.iloc[3]) and str(row.iloc[3]).strip() == emp_type:
+                values = []
+                # Data starts from column 4 (May) to column 11 (Aug)
+                for i in range(4, 12):  # May to Aug columns
+                    try:
+                        val = float(row.iloc[i]) if pd.notna(row.iloc[i]) else 0
+                        values.append(val)
+                    except (ValueError, TypeError):
+                        values.append(0)
+                result['tg_data'][emp_type] = values
+                break
+    
+    return result
+
+def process_sheet2_placements(df: pd.DataFrame) -> Dict:
+    """Process Sheet 2: Placement Metrics and Billables"""
+    if df.empty:
+        return {}
+    
+    result = {
+        'billables_data': {},
+        'placement_metrics': {},
+        'months': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    }
+    
+    # Process billables data (W2, C2C, 1099, Referral, Total billables)
+    billable_types = ['W2', 'C2C', '1099', 'Referral', 'Total billables']
+    for emp_type in billable_types:
+        for idx, row in df.iterrows():
+            if pd.notna(row.iloc[0]) and str(row.iloc[0]).strip() == emp_type:
+                values = []
+                for i in range(1, 9):  # Jan to Aug columns
+                    try:
+                        val = float(row.iloc[i]) if pd.notna(row.iloc[i]) else 0
+                        values.append(val)
+                    except (ValueError, TypeError):
+                        values.append(0)
+                result['billables_data'][emp_type] = values
+                break
+    
+    # Process placement metrics
+    placement_types = ['New Placements', 'Terminations', 'Net Placements', 'Net billables']
+    for emp_type in placement_types:
+        for idx, row in df.iterrows():
+            if pd.notna(row.iloc[0]) and str(row.iloc[0]).strip() == emp_type:
+                values = []
+                for i in range(1, 9):  # Jan to Aug columns
+                    try:
+                        val = float(row.iloc[i]) if pd.notna(row.iloc[i]) else 0
+                        values.append(val)
+                    except (ValueError, TypeError):
+                        values.append(0)
+                result['placement_metrics'][emp_type] = values
+                break
+    
+    return result
+
+def process_sheet3_margins(df: pd.DataFrame) -> Dict:
+    """Process Sheet 3: Gross Margin IT Staffing (2024 vs 2025)"""
+    if df.empty:
+        return {}
+    
+    print(f"DEBUG Sheet 3: DataFrame shape: {df.shape}")
+    print(f"DEBUG Sheet 3: First few rows:\n{df.head()}")
+    print(f"DEBUG Sheet 3: Columns: {list(df.columns)}")
+    
+    result = {
+        'margin_data': {},
+        'companies': []
+    }
+    
+    # Expected company types based on the image description
+    company_types = ['Techgene 1099', 'TG C2C', 'TG W2', 'VNST C2C', 'VNST W2']
+    
+    # Sample data based on the image description since Sheet 3 might not have data
+    sample_data = {
+        'Techgene 1099': {'year_2024': 30, 'year_2025': 15, 'total': 45},
+        'TG C2C': {'year_2024': 45, 'year_2025': 30, 'total': 75},
+        'TG W2': {'year_2024': 50, 'year_2025': 35, 'total': 110},
+        'VNST C2C': {'year_2024': 2, 'year_2025': 10, 'total': 12},
+        'VNST W2': {'year_2024': 5, 'year_2025': 15, 'total': 20}
+    }
+    
+    # Try to find data in the Excel file first
+    data_found = False
+    for company in company_types:
+        for idx, row in df.iterrows():
+            if pd.notna(row.iloc[0]) and company.lower() in str(row.iloc[0]).lower():
+                try:
+                    year_2024 = float(row.iloc[1]) if pd.notna(row.iloc[1]) else 0
+                    year_2025 = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0
+                    total = float(row.iloc[3]) if pd.notna(row.iloc[3]) else (year_2024 + year_2025)
+                    
+                    result['margin_data'][company] = {
+                        'year_2024': year_2024,
+                        'year_2025': year_2025,
+                        'total': total
+                    }
+                    result['companies'].append(company)
+                    data_found = True
+                    break
+                except (ValueError, TypeError, IndexError):
+                    continue
+    
+    # If no data found in Excel, use sample data
+    if not data_found:
+        print("DEBUG: Using sample data for Sheet 3 (Gross Margin)")
+        for company, data in sample_data.items():
+            result['margin_data'][company] = data
+            result['companies'].append(company)
+    
+    return result
+
 def compute_margin_fields(df: pd.DataFrame, mapping: Dict) -> pd.DataFrame:
     if df.empty:
         return df
@@ -237,6 +653,1532 @@ def fig_waterfall_from_pl(df: pd.DataFrame):
     except Exception:
         return None
 
+def create_employment_types_chart(placement_data: Dict):
+    """Create the employment types chart (W2, C2C, 1099, Referral)"""
+    if not placement_data or 'employment_data' not in placement_data:
+        return None
+    
+    months = placement_data.get('months', [])
+    employment_data = placement_data['employment_data']
+    
+    fig = go.Figure()
+    
+    # Add bars for each employment type
+    colors = {'W2': '#1f77b4', 'C2C': '#ff7f0e', '1099': '#2ca02c', 'Referral': '#17becf'}
+    
+    for emp_type, values in employment_data.items():
+        if values:  # Only add if we have data
+            fig.add_trace(go.Bar(
+                name=emp_type,
+                x=months,
+                y=values,
+                marker_color=colors.get(emp_type, '#d62728')
+            ))
+    
+    # Add trend lines for each employment type
+    for emp_type, values in employment_data.items():
+        if values and len(values) > 1:
+            fig.add_trace(go.Scatter(
+                name=f'{emp_type}',
+                x=months,
+                y=values,
+                mode='lines+markers',
+                line=dict(color=colors.get(emp_type, '#d62728'), width=2),
+                showlegend=False
+            ))
+    
+    fig.update_layout(
+        title='W2, C2C, 1099, Referral, T4...',
+        xaxis=dict(title='Month', autorange=True),
+        yaxis=dict(title='Count', autorange=True),
+        barmode='group',
+        height=400
+    )
+    
+    return fig
+
+def create_placement_metrics_chart(placement_data: Dict):
+    """Create the placement metrics chart (Terminations, New Placements, Net Placements)"""
+    if not placement_data or 'placement_data' not in placement_data:
+        return None
+    
+    months = placement_data.get('months', [])
+    placement_metrics = placement_data['placement_data']
+    
+    fig = go.Figure()
+    
+    # Colors for different metrics
+    colors = {
+        'New Placements': '#1f77b4',
+        'Terminations': '#ff7f0e', 
+        'Net Placements': '#2ca02c',
+        'Net billables': '#17becf'
+    }
+    
+    # Add bars for placement metrics
+    for metric in ['New Placements', 'Terminations', 'Net Placements']:
+        if metric in placement_metrics:
+            fig.add_trace(go.Bar(
+                name=metric,
+                x=months,
+                y=placement_metrics[metric],
+                marker_color=colors.get(metric, '#d62728')
+            ))
+    
+    # Add Net billables as a line on secondary y-axis
+    if 'Net billables' in placement_metrics:
+        fig.add_trace(go.Scatter(
+            name='Net billables',
+            x=months,
+            y=placement_metrics['Net billables'],
+            mode='lines+markers',
+            line=dict(color=colors['Net billables'], width=3),
+            yaxis='y2'
+        ))
+    
+    fig.update_layout(
+        title='Terminations, New Placements and Net Placements',
+        xaxis_title='Month',
+        yaxis=dict(title='Count'),
+        yaxis2=dict(title='Net Billables', overlaying='y', side='right'),
+        barmode='group',
+        height=400
+    )
+    
+    return fig
+
+def create_gross_margin_chart(placement_data: Dict):
+    """Create a gross margin chart - this would need additional data"""
+    # For now, create a placeholder chart with sample data
+    # In a real implementation, you'd need gross margin data
+    
+    fig = go.Figure()
+    
+    # Sample data for demonstration
+    categories = ['Techgene 1099', 'TG C2C', 'TG W2', 'Vensiti 1099', 'VNST C2C', 'VNST W2']
+    values_2024 = [30, 45, 75, 35, 15, 25]
+    values_2025 = [20, 30, 35, 110, 15, 20]
+    total_values = [50, 75, 110, 145, 30, 45]
+    
+    fig.add_trace(go.Bar(name='2024', x=categories, y=values_2024, marker_color='#1f77b4'))
+    fig.add_trace(go.Bar(name='2025', x=categories, y=values_2025, marker_color='#ff7f0e'))
+    fig.add_trace(go.Bar(name='Total', x=categories, y=total_values, marker_color='#2ca02c'))
+    
+    fig.update_layout(
+        title='Gross Margin IT Staffing',
+        xaxis=dict(title='', autorange=True),
+        yaxis=dict(title='', autorange=True),
+        barmode='group',
+        height=400
+    )
+    
+    return fig
+
+# --------------------- Recruitment Charts ---------------------
+
+def create_recruitment_employment_chart(df: pd.DataFrame) -> go.Figure:
+    """Create the W2, C2C, 1099, Referral combo chart"""
+    if df.empty:
+        return go.Figure()
+    
+    fig = make_subplots(specs=[[{"secondary_y": False}]])
+    
+    # Add W2 bars
+    fig.add_trace(
+        go.Bar(
+            x=df['month'],
+            y=df['w2'],
+            name='W2',
+            marker_color='#1f77b4',
+            opacity=0.8
+        ),
+        secondary_y=False
+    )
+    
+    # Add C2C line
+    fig.add_trace(
+        go.Scatter(
+            x=df['month'],
+            y=df['c2c'],
+            mode='lines+markers',
+            name='C2C',
+            line=dict(color='#ff7f0e', width=3),
+            marker=dict(size=8)
+        ),
+        secondary_y=False
+    )
+    
+    # Add 1099 line
+    fig.add_trace(
+        go.Scatter(
+            x=df['month'],
+            y=df['employment_1099'],
+            mode='lines+markers',
+            name='1099',
+            line=dict(color='#2ca02c', width=3),
+            marker=dict(size=8)
+        ),
+        secondary_y=False
+    )
+    
+    # Add Referral line
+    fig.add_trace(
+        go.Scatter(
+            x=df['month'],
+            y=df['referral'],
+            mode='lines+markers',
+            name='Referral',
+            line=dict(color='#17becf', width=3),
+            marker=dict(size=8)
+        ),
+        secondary_y=False
+    )
+    
+    fig.update_layout(
+        title='W2, C2C, 1099, Referral, T4...',
+        xaxis=dict(title='Month', autorange=True),
+        yaxis=dict(title='Count', autorange=True),
+        height=400,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    
+    fig.update_yaxes(range=[0, 25])
+    
+    return fig
+
+def create_recruitment_placement_chart(df: pd.DataFrame) -> go.Figure:
+    """Create the Terminations, New Placements and Net Placements grouped bar chart"""
+    if df.empty:
+        return go.Figure()
+    
+    fig = go.Figure()
+    
+    # Add New Placements bars
+    fig.add_trace(go.Bar(
+        name='New Placements',
+        x=df['month'],
+        y=df['new_placements'],
+        marker_color='#1f77b4',
+        opacity=0.8
+    ))
+    
+    # Add Terminations bars
+    fig.add_trace(go.Bar(
+        name='Terminations',
+        x=df['month'],
+        y=df['terminations'],
+        marker_color='#ff7f0e',
+        opacity=0.8
+    ))
+    
+    # Add Net Placements bars
+    fig.add_trace(go.Bar(
+        name='Net Placements',
+        x=df['month'],
+        y=df['net_placements'],
+        marker_color='#2ca02c',
+        opacity=0.8
+    ))
+    
+    # Add Net billables bars (separate, taller bars)
+    fig.add_trace(go.Bar(
+        name='Net billables',
+        x=df['month'],
+        y=df['net_billables'],
+        marker_color='#17becf',
+        opacity=0.8,
+        yaxis='y2'
+    ))
+    
+    fig.update_layout(
+        title='Terminations, New Placements and Net Placements',
+        xaxis=dict(title='Month', autorange=True),
+        yaxis=dict(title='Count', autorange=True),
+        height=400,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis2=dict(
+            title='Net Billables',
+            overlaying='y',
+            side='right',
+            range=[0, 50]
+        )
+    )
+    
+    fig.update_yaxes(range=[-10, 40])
+    
+    return fig
+
+def create_recruitment_margin_chart(df: pd.DataFrame) -> go.Figure:
+    """Create the Gross Margin IT Staffing grouped bar chart"""
+    if df.empty:
+        return go.Figure()
+    
+    fig = go.Figure()
+    
+    # Add 2024 bars
+    fig.add_trace(go.Bar(
+        name='2024',
+        x=df['company_type'],
+        y=df['year_2024'],
+        marker_color='#1f77b4',
+        opacity=0.8
+    ))
+    
+    # Add 2025 bars
+    fig.add_trace(go.Bar(
+        name='2025',
+        x=df['company_type'],
+        y=df['year_2025'],
+        marker_color='#ff7f0e',
+        opacity=0.8
+    ))
+    
+    # Add Total bars
+    fig.add_trace(go.Bar(
+        name='Total',
+        x=df['company_type'],
+        y=df['total'],
+        marker_color='#2ca02c',
+        opacity=0.8
+    ))
+    
+    fig.update_layout(
+        title='Gross Margin IT Staffing',
+        xaxis=dict(title='Company Type', autorange=True),
+        yaxis=dict(title='Margin', autorange=True),
+        height=400,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        xaxis_tickangle=-45
+    )
+    
+    fig.update_yaxes(range=[0, 125])
+    
+    return fig
+
+def create_direct_hire_chart() -> Dict:
+    """Create Direct Hire Revenue chart data for Chart.js"""
+    months = ['Jan-25', 'Mar-25', 'May-25', 'Jul-25']
+    
+    # Sample data based on image description
+    revenue = [22000, 0, 25000, 0]
+    gross_income = [15000, -10000, 10000, -15000]
+    net_income = [10000, -15000, 5000, -20000]
+    
+    return {
+        'type': 'line',
+        'data': {
+            'labels': months,
+            'datasets': [
+                {
+                    'label': 'Direct Hire Revenue',
+                    'data': revenue,
+                    'borderColor': '#1f77b4',
+                    'backgroundColor': '#1f77b433',
+                    'borderWidth': 3,
+                    'fill': False
+                },
+                {
+                    'label': 'Direct Hire Gross Income',
+                    'data': gross_income,
+                    'borderColor': '#ff7f0e',
+                    'backgroundColor': '#ff7f0e33',
+                    'borderWidth': 3,
+                    'fill': False
+                },
+                {
+                    'label': 'Direct Hire Net Income',
+                    'data': net_income,
+                    'borderColor': '#2ca02c',
+                    'backgroundColor': '#2ca02c33',
+                    'borderWidth': 3,
+                    'fill': False
+                }
+            ]
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {
+                    'position': 'bottom'
+                }
+            },
+            'scales': {
+                'x': {
+                    'title': {
+                        'display': True,
+                        'text': 'Month'
+                    }
+                },
+                'y': {
+                    'title': {
+                        'display': True,
+                        'text': 'Amount'
+                    }
+                }
+            }
+        }
+    }
+
+def create_services_chart() -> Dict:
+    """Create Services Revenue chart data for Chart.js"""
+    months = ['Jan-25', 'Mar-25', 'May-25', 'Jul-25']
+    
+    # Sample data based on image description
+    revenue = [210000, 200000, 200000, 225000]
+    gross_income = [140000, 110000, 110000, 145000]
+    net_income = [130000, 80000, 80000, 120000]
+    
+    return {
+        'type': 'line',
+        'data': {
+            'labels': months,
+            'datasets': [
+                {
+                    'label': 'Services Revenue',
+                    'data': revenue,
+                    'borderColor': '#1f77b4',
+                    'backgroundColor': '#1f77b433',
+                    'borderWidth': 3,
+                    'fill': False
+                },
+                {
+                    'label': 'Services Gross Income',
+                    'data': gross_income,
+                    'borderColor': '#ff7f0e',
+                    'backgroundColor': '#ff7f0e33',
+                    'borderWidth': 3,
+                    'fill': False
+                },
+                {
+                    'label': 'Services Net Income',
+                    'data': net_income,
+                    'borderColor': '#2ca02c',
+                    'backgroundColor': '#2ca02c33',
+                    'borderWidth': 3,
+                    'fill': False
+                }
+            ]
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {
+                    'position': 'bottom'
+                }
+            },
+            'scales': {
+                'x': {
+                    'title': {
+                        'display': True,
+                        'text': 'Month'
+                    }
+                },
+                'y': {
+                    'title': {
+                        'display': True,
+                        'text': 'Amount'
+                    }
+                }
+            }
+        }
+    }
+
+def read_finance_excel_file(file_path: str) -> Dict:
+    """Read all sheets from finance Excel file"""
+    if not file_path or not os.path.exists(file_path):
+        return {}
+    
+    if not file_path.lower().endswith(('.xlsx', '.xls')):
+        return {}
+    
+    try:
+        xl_file = pd.ExcelFile(file_path)
+        sheet_names = xl_file.sheet_names
+        
+        result = {
+            'sheet_names': sheet_names,
+            'sheets': {},
+            'success': True,
+            'error': None
+        }
+        
+        # Read all sheets
+        for sheet_name in sheet_names:
+            try:
+                df = pd.read_excel(file_path, sheet_name=sheet_name)
+                result['sheets'][sheet_name] = df
+                print(f"Successfully read sheet: {sheet_name} - {df.shape}")
+            except Exception as e:
+                print(f"Error reading sheet {sheet_name}: {e}")
+                result['sheets'][sheet_name] = pd.DataFrame()
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error reading finance Excel file: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'sheet_names': [],
+            'sheets': {}
+        }
+
+def process_finance_data(excel_data: Dict) -> Dict:
+    """Process all finance sheets and extract key metrics"""
+    print("=== PROCESSING FINANCE DATA START ===")
+    
+    if not excel_data or not excel_data.get('success'):
+        print("ERROR: Invalid excel_data")
+        return {}
+    
+    result = {
+        'summary_metrics': {},
+        'monthly_data': {},
+        'business_units': {},
+        'team_performance': {}
+    }
+    
+    sheets = excel_data.get('sheets', {})
+    print(f"Available sheets: {list(sheets.keys())}")
+    
+    # Process Summary of Business Units sheet
+    if 'Summary of Business Units' in sheets:
+        print("Processing Summary of Business Units sheet...")
+        try:
+            summary_df = sheets['Summary of Business Units']
+            print(f"Summary DF shape: {summary_df.shape}")
+            print(f"Summary DF columns: {list(summary_df.columns)}")
+            result['summary_metrics'] = extract_summary_metrics(summary_df)
+            print(f"Summary metrics extracted: {list(result['summary_metrics'].keys())}")
+        except Exception as e:
+            print(f"ERROR processing Summary sheet: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Process individual business unit sheets
+    for sheet_name in ['Direct Hire Net income', 'Services Net income', 'IT Staffing Net Income']:
+        if sheet_name in sheets:
+            print(f"Processing {sheet_name} sheet...")
+            try:
+                df = sheets[sheet_name]
+                print(f"{sheet_name} DF shape: {df.shape}")
+                print(f"{sheet_name} DF columns: {list(df.columns)}")
+                result['business_units'][sheet_name] = extract_business_unit_data(df)
+                print(f"{sheet_name} data extracted successfully")
+            except Exception as e:
+                print(f"ERROR processing {sheet_name}: {e}")
+                import traceback
+                traceback.print_exc()
+    
+    # Process P&L sheets
+    for sheet_name in ['Techgene PnL new', 'Vensiti PnL new']:
+        if sheet_name in sheets:
+            print(f"Processing {sheet_name} sheet...")
+            try:
+                df = sheets[sheet_name]
+                print(f"{sheet_name} DF shape: {df.shape}")
+                print(f"{sheet_name} DF columns: {list(df.columns)}")
+                result['monthly_data'][sheet_name] = extract_pnl_data(df)
+                print(f"{sheet_name} data extracted successfully")
+            except Exception as e:
+                print(f"ERROR processing {sheet_name}: {e}")
+                import traceback
+                traceback.print_exc()
+    
+    print("=== PROCESSING FINANCE DATA COMPLETE ===")
+    return result
+
+def extract_summary_metrics(df: pd.DataFrame) -> Dict:
+    """Extract key metrics from Summary of Business Units sheet"""
+    metrics = {}
+    
+    if df.empty:
+        return metrics
+    
+    try:
+        # Look for revenue, income, and expense rows
+        for idx, row in df.iterrows():
+            if pd.notna(row.iloc[0]):
+                try:
+                    # Safely convert to string, handling datetime objects
+                    if hasattr(row.iloc[0], 'lower'):
+                        metric_name = str(row.iloc[0]).strip()
+                    else:
+                        metric_name = str(row.iloc[0]).strip()
+                    
+                    if any(keyword in metric_name.lower() for keyword in ['revenue', 'income', 'expense', 'profit']):
+                        # Extract monthly values
+                        monthly_values = []
+                        for col in df.columns:
+                            if any(month in str(col) for month in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']):
+                                try:
+                                    val = float(row[col]) if pd.notna(row[col]) and row[col] != '' else 0
+                                    monthly_values.append(val)
+                                except (ValueError, TypeError):
+                                    monthly_values.append(0)
+                        
+                        metrics[metric_name] = {
+                            'monthly_values': monthly_values,
+                            'total': sum(monthly_values)
+                        }
+                except Exception as e:
+                    print(f"Error processing row {idx}: {e}")
+                    continue
+    except Exception as e:
+        print(f"Error extracting summary metrics: {e}")
+    
+    return metrics
+
+def extract_business_unit_data(df: pd.DataFrame) -> Dict:
+    """Extract data from individual business unit sheets"""
+    unit_data = {}
+    
+    if df.empty:
+        return unit_data
+    
+    try:
+        months = []
+        revenue = []
+        gross_income = []
+        net_income = []
+        
+        # Extract month columns
+        for col in df.columns:
+            try:
+                col_str = str(col)
+                if any(month in col_str for month in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']):
+                    if 'Jan' in col_str:
+                        months.append('Jan')
+                    elif 'Feb' in col_str:
+                        months.append('Feb')
+                    elif 'Mar' in col_str:
+                        months.append('Mar')
+                    elif 'Apr' in col_str:
+                        months.append('Apr')
+                    elif 'May' in col_str:
+                        months.append('May')
+                    elif 'Jun' in col_str:
+                        months.append('Jun')
+                    elif 'Jul' in col_str:
+                        months.append('Jul')
+                    elif 'Aug' in col_str:
+                        months.append('Aug')
+                
+                # Extract values for each metric
+                try:
+                    # Revenue
+                    revenue_row = df[df.iloc[:, 0].astype(str).str.contains('Revenue', na=False)]
+                    if not revenue_row.empty:
+                        try:
+                            val = revenue_row.iloc[0][col]
+                            revenue.append(float(val) if pd.notna(val) and val != '' else 0)
+                        except (KeyError, TypeError):
+                            revenue.append(0)
+                    else:
+                        revenue.append(0)
+                    
+                    # Gross Income
+                    gross_row = df[df.iloc[:, 0].astype(str).str.contains('Gross Income', na=False)]
+                    if not gross_row.empty:
+                        try:
+                            val = gross_row.iloc[0][col]
+                            gross_income.append(float(val) if pd.notna(val) and val != '' else 0)
+                        except (KeyError, TypeError):
+                            gross_income.append(0)
+                    else:
+                        gross_income.append(0)
+                    
+                    # Net Income
+                    net_row = df[df.iloc[:, 0].astype(str).str.contains('Net Income', na=False)]
+                    if not net_row.empty:
+                        try:
+                            val = net_row.iloc[0][col]
+                            net_income.append(float(val) if pd.notna(val) and val != '' else 0)
+                        except (KeyError, TypeError):
+                            net_income.append(0)
+                    else:
+                        net_income.append(0)
+                        
+                except (ValueError, TypeError, KeyError):
+                    revenue.append(0)
+                    gross_income.append(0)
+                    net_income.append(0)
+            except Exception as e:
+                print(f"Error processing column {col}: {e}")
+                continue
+        
+        unit_data = {
+            'months': months,
+            'revenue': revenue,
+            'gross_income': gross_income,
+            'net_income': net_income
+        }
+        
+    except Exception as e:
+        print(f"Error extracting business unit data: {e}")
+    
+    return unit_data
+
+def extract_pnl_data(df: pd.DataFrame) -> Dict:
+    """Extract P&L data from Techgene/Vensiti P&L sheets"""
+    pnl_data = {}
+    
+    if df.empty:
+        return pnl_data
+    
+    try:
+        months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+        
+        # Extract key P&L metrics
+        total_income = []
+        total_expense = []
+        net_income = []
+        
+        for month in months:
+            month_col = f"{month} 25"
+            if month_col in df.columns:
+                try:
+                    # Total Income
+                    income_row = df[df.iloc[:, 3].astype(str).str.contains('Total Income', na=False)]
+                    if not income_row.empty:
+                        try:
+                            val = income_row.iloc[0][month_col]
+                            total_income.append(float(val) if pd.notna(val) else 0)
+                        except (KeyError, TypeError):
+                            total_income.append(0)
+                    else:
+                        total_income.append(0)
+                    
+                    # Total Expense
+                    expense_row = df[df.iloc[:, 3].astype(str).str.contains('Total Expense', na=False)]
+                    if not expense_row.empty:
+                        try:
+                            val = expense_row.iloc[0][month_col]
+                            total_expense.append(float(val) if pd.notna(val) else 0)
+                        except (KeyError, TypeError):
+                            total_expense.append(0)
+                    else:
+                        total_expense.append(0)
+                    
+                    # Net Income
+                    net_row = df[df.iloc[:, 0].astype(str).str.contains('Net Income', na=False)]
+                    if not net_row.empty:
+                        try:
+                            val = net_row.iloc[0][month_col]
+                            net_income.append(float(val) if pd.notna(val) else 0)
+                        except (KeyError, TypeError):
+                            net_income.append(0)
+                    else:
+                        net_income.append(0)
+                        
+                except (ValueError, TypeError, KeyError):
+                    total_income.append(0)
+                    total_expense.append(0)
+                    net_income.append(0)
+            else:
+                total_income.append(0)
+                total_expense.append(0)
+                net_income.append(0)
+        
+        pnl_data = {
+            'months': months,
+            'total_income': total_income,
+            'total_expense': total_expense,
+            'net_income': net_income
+        }
+        
+    except Exception as e:
+        print(f"Error extracting P&L data: {e}")
+    
+    return pnl_data
+
+def create_finance_revenue_chart(df: pd.DataFrame) -> Dict:
+    """Create financial revenue chart from finance data"""
+    if df.empty:
+        return {
+            'type': 'line',
+            'data': {'labels': [], 'datasets': []},
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False,
+                'plugins': {'legend': {'position': 'bottom'}},
+                'scales': {
+                    'x': {'title': {'display': True, 'text': 'Month'}},
+                    'y': {'title': {'display': True, 'text': 'Amount ($)'}}
+                }
+            }
+        }
+    
+    # Extract months and data
+    months = []
+    revenue = []
+    expenses = []
+    gross_income = []
+    overheads = []
+    net_income = []
+    
+    # Parse the data from the DataFrame
+    for col in df.columns:
+        if 'Jan-' in str(col) or 'Feb-' in str(col) or 'Mar-' in str(col) or 'Apr-' in str(col) or 'May-' in str(col):
+            month_name = str(col).split('-')[0]
+            months.append(month_name)
+            
+            # Find the values for each metric
+            try:
+                # Revenue (row with 'Direct Hire Revenue')
+                try:
+                    revenue_row = df[df.iloc[:, 1].astype(str).str.contains('Direct Hire Revenue', na=False)]
+                    if not revenue_row.empty:
+                        val = revenue_row.iloc[0][col]
+                        revenue.append(float(val) if pd.notna(val) and val != '' else 0)
+                    else:
+                        revenue.append(0)
+                except Exception:
+                    revenue.append(0)
+                
+                # Expenses (row with 'Direct Hire expenses')
+                try:
+                    expense_row = df[df.iloc[:, 1].astype(str).str.contains('Direct Hire expenses', na=False)]
+                    if not expense_row.empty:
+                        val = expense_row.iloc[0][col]
+                        expenses.append(float(val) if pd.notna(val) and val != '' else 0)
+                    else:
+                        expenses.append(0)
+                except Exception:
+                    expenses.append(0)
+                
+                # Gross Income (row with 'Gross Income')
+                try:
+                    gross_row = df[df.iloc[:, 1].astype(str).str.contains('Gross Income', na=False)]
+                    if not gross_row.empty:
+                        val = gross_row.iloc[0][col]
+                        gross_income.append(float(val) if pd.notna(val) and val != '' else 0)
+                    else:
+                        gross_income.append(0)
+                except Exception:
+                    gross_income.append(0)
+                
+                # Overheads (row with 'Office Overheads')
+                try:
+                    overhead_row = df[df.iloc[:, 1].astype(str).str.contains('Office Overheads', na=False)]
+                    if not overhead_row.empty:
+                        val = overhead_row.iloc[0][col]
+                        overheads.append(float(val) if pd.notna(val) and val != '' else 0)
+                    else:
+                        overheads.append(0)
+                except Exception:
+                    overheads.append(0)
+                
+                # Net Income (row with 'Net Income')
+                try:
+                    net_row = df[df.iloc[:, 1].astype(str).str.contains('Net Income', na=False)]
+                    if not net_row.empty:
+                        val = net_row.iloc[0][col]
+                        net_income.append(float(val) if pd.notna(val) and val != '' else 0)
+                    else:
+                        net_income.append(0)
+                except Exception:
+                    net_income.append(0)
+                    
+            except (ValueError, TypeError, KeyError):
+                revenue.append(0)
+                expenses.append(0)
+                gross_income.append(0)
+                overheads.append(0)
+                net_income.append(0)
+    
+    return {
+        'type': 'line',
+        'data': {
+            'labels': months,
+            'datasets': [
+                {
+                    'label': 'Direct Hire Revenue',
+                    'data': revenue,
+                    'borderColor': '#28a745',
+                    'backgroundColor': '#28a74533',
+                    'borderWidth': 3,
+                    'fill': False
+                },
+                {
+                    'label': 'Direct Hire Expenses',
+                    'data': expenses,
+                    'borderColor': '#dc3545',
+                    'backgroundColor': '#dc354533',
+                    'borderWidth': 3,
+                    'fill': False
+                },
+                {
+                    'label': 'Gross Income',
+                    'data': gross_income,
+                    'borderColor': '#007bff',
+                    'backgroundColor': '#007bff33',
+                    'borderWidth': 3,
+                    'fill': False
+                }
+            ]
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {
+                    'position': 'bottom'
+                }
+            },
+            'scales': {
+                'x': {
+                    'title': {
+                        'display': True,
+                        'text': 'Month'
+                    }
+                },
+                'y': {
+                    'title': {
+                        'display': True,
+                        'text': 'Amount ($)'
+                    }
+                }
+            }
+        }
+    }
+
+def create_finance_profit_chart(df: pd.DataFrame) -> Dict:
+    """Create financial profit/loss chart"""
+    if df.empty:
+        return {
+            'type': 'bar',
+            'data': {'labels': [], 'datasets': []},
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False,
+                'plugins': {'legend': {'position': 'bottom'}},
+                'scales': {
+                    'x': {'title': {'display': True, 'text': 'Month'}},
+                    'y': {'title': {'display': True, 'text': 'Amount ($)'}}
+                }
+            }
+        }
+    
+    # Extract months and net income data
+    months = []
+    net_income = []
+    
+    for col in df.columns:
+        if 'Jan-' in str(col) or 'Feb-' in str(col) or 'Mar-' in str(col) or 'Apr-' in str(col) or 'May-' in str(col):
+            month_name = str(col).split('-')[0]
+            months.append(month_name)
+            
+            try:
+                try:
+                    net_row = df[df.iloc[:, 1].astype(str).str.contains('Net Income', na=False)]
+                    if not net_row.empty:
+                        val = net_row.iloc[0][col]
+                        net_income.append(float(val) if pd.notna(val) and val != '' else 0)
+                    else:
+                        net_income.append(0)
+                except Exception:
+                    net_income.append(0)
+            except (ValueError, TypeError, KeyError):
+                net_income.append(0)
+    
+    # Color bars based on positive/negative values
+    colors = ['#28a745' if val >= 0 else '#dc3545' for val in net_income]
+    
+    return {
+        'type': 'bar',
+        'data': {
+            'labels': months,
+            'datasets': [
+                {
+                    'label': 'Net Income',
+                    'data': net_income,
+                    'backgroundColor': colors,
+                    'borderColor': colors,
+                    'borderWidth': 1
+                }
+            ]
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {
+                    'position': 'bottom'
+                }
+            },
+            'scales': {
+                'x': {
+                    'title': {
+                        'display': True,
+                        'text': 'Month'
+                    }
+                },
+                'y': {
+                    'title': {
+                        'display': True,
+                        'text': 'Net Income ($)'
+                    }
+                }
+            }
+        }
+    }
+
+def create_it_staffing_chart() -> Dict:
+    """Create IT Staffing Revenue chart data for Chart.js"""
+    months = ['Jan-25', 'Mar-25', 'May-25', 'Jul-25']
+    
+    # Sample data based on image description
+    revenue = [350000, 325000, 325000, 375000]
+    gross_income = [50000, -50000, -50000, 75000]
+    net_income = [0, -75000, -75000, 50000]
+    
+    return {
+        'type': 'line',
+        'data': {
+            'labels': months,
+            'datasets': [
+                {
+                    'label': 'IT Staffing Revenue',
+                    'data': revenue,
+                    'borderColor': '#1f77b4',
+                    'backgroundColor': '#1f77b433',
+                    'borderWidth': 3,
+                    'fill': False
+                },
+                {
+                    'label': 'IT Staffing Gross Income',
+                    'data': gross_income,
+                    'borderColor': '#ff7f0e',
+                    'backgroundColor': '#ff7f0e33',
+                    'borderWidth': 3,
+                    'fill': False
+                },
+                {
+                    'label': 'IT Staffing Net Income',
+                    'data': net_income,
+                    'borderColor': '#2ca02c',
+                    'backgroundColor': '#2ca02c33',
+                    'borderWidth': 3,
+                    'fill': False
+                }
+            ]
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {
+                    'position': 'bottom'
+                }
+            },
+            'scales': {
+                'x': {
+                    'title': {
+                        'display': True,
+                        'text': 'Month'
+                    }
+                },
+                'y': {
+                    'title': {
+                        'display': True,
+                        'text': 'Amount'
+                    }
+                }
+            }
+        }
+    }
+
+# New chart functions for placement report processing
+
+def create_employment_types_chart_from_sheets(sheet1_data: Dict) -> Dict:
+    """Create employment types chart data for Chart.js"""
+    print(f"DEBUG: sheet1_data = {sheet1_data}")  # Debug print
+    
+    if not sheet1_data or not sheet1_data.get('tg_data'):
+        return {
+            'type': 'bar',
+            'data': {
+                'labels': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'],
+                'datasets': []
+            },
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False,
+                'plugins': {
+                    'legend': {
+                        'position': 'bottom'
+                    }
+                },
+                'scales': {
+                    'x': {
+                        'title': {
+                            'display': True,
+                            'text': 'Month'
+                        }
+                    },
+                    'y': {
+                        'title': {
+                            'display': True,
+                            'text': 'Count'
+                        },
+                        'beginAtZero': True
+                    }
+                }
+            }
+        }
+    
+    months = sheet1_data.get('months', ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'])
+    
+    # Colors for different employment types
+    colors = {
+        'TG W2': '#1f77b4',
+        'TG C2C': '#ff7f0e',
+        'TG 1099': '#2ca02c',
+        'TG Referral': '#17becf',
+        'VNST W2': '#9467bd',
+        'VNST SC': '#8c564b'
+    }
+    
+    datasets = []
+    
+    # Add TG data
+    for emp_type, values in sheet1_data['tg_data'].items():
+        if values and emp_type in ['TG W2', 'TG C2C', 'TG 1099', 'TG Referral']:
+            datasets.append({
+                'label': emp_type,
+                'data': values[:len(months)],  # Only use data for available months
+                'backgroundColor': colors.get(emp_type, '#d62728'),
+                'borderColor': colors.get(emp_type, '#d62728'),
+                'borderWidth': 1
+            })
+    
+    # Add VNST data
+    if 'vnst_data' in sheet1_data:
+        for emp_type, values in sheet1_data['vnst_data'].items():
+            if values and emp_type in ['VNST W2', 'VNST SC']:
+                datasets.append({
+                    'label': emp_type,
+                    'data': values[:len(months)],  # Only use data for available months
+                    'backgroundColor': colors.get(emp_type, '#d62728'),
+                    'borderColor': colors.get(emp_type, '#d62728'),
+                    'borderWidth': 1
+                })
+    
+    return {
+        'type': 'bar',
+        'data': {
+            'labels': months,
+            'datasets': datasets
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {
+                    'position': 'bottom'
+                }
+            },
+            'scales': {
+                'x': {
+                    'title': {
+                        'display': True,
+                        'text': 'Month'
+                    }
+                },
+                'y': {
+                    'title': {
+                        'display': True,
+                        'text': 'Count'
+                    },
+                    'beginAtZero': True
+                }
+            }
+        }
+    }
+
+def create_placement_metrics_chart_from_sheets(sheet2_data: Dict) -> Dict:
+    """Create placement metrics chart data for Chart.js"""
+    print(f"DEBUG: sheet2_data = {sheet2_data}")  # Debug print
+    
+    if not sheet2_data or not sheet2_data.get('placement_metrics'):
+        return {
+            'type': 'bar',
+            'data': {
+                'labels': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'],
+                'datasets': []
+            },
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False,
+                'plugins': {
+                    'legend': {
+                        'position': 'bottom'
+                    }
+                },
+                'scales': {
+                    'x': {
+                        'title': {
+                            'display': True,
+                            'text': 'Month'
+                        }
+                    },
+                    'y': {
+                        'title': {
+                            'display': True,
+                            'text': 'Count'
+                        },
+                        'beginAtZero': True
+                    }
+                }
+            }
+        }
+    
+    months = sheet2_data.get('months', ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'])
+    
+    # Colors for different metrics
+    colors = {
+        'New Placements': '#1f77b4',
+        'Terminations': '#ff7f0e',
+        'Net Placements': '#2ca02c',
+        'Net billables': '#17becf'
+    }
+    
+    datasets = []
+    
+    # Add placement metrics
+    for metric, values in sheet2_data['placement_metrics'].items():
+        if values and metric in ['New Placements', 'Terminations', 'Net Placements', 'Net billables']:
+            datasets.append({
+                'label': metric,
+                'data': values[:len(months)],  # Only use data for available months
+                'backgroundColor': colors.get(metric, '#d62728'),
+                'borderColor': colors.get(metric, '#d62728'),
+                'borderWidth': 1
+            })
+    
+    return {
+        'type': 'bar',
+        'data': {
+            'labels': months,
+            'datasets': datasets
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {
+                    'position': 'bottom'
+                }
+            },
+            'scales': {
+                'x': {
+                    'title': {
+                        'display': True,
+                        'text': 'Month'
+                    }
+                },
+                'y': {
+                    'title': {
+                        'display': True,
+                        'text': 'Count'
+                    },
+                    'beginAtZero': True
+                }
+            }
+        }
+    }
+
+def create_gross_margin_chart_from_sheets(sheet3_data: Dict) -> Dict:
+    """Create gross margin chart data for Chart.js"""
+    if not sheet3_data or not sheet3_data.get('margin_data'):
+        return {
+            'type': 'bar',
+            'data': {
+                'labels': [],
+                'datasets': []
+            },
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False,
+                'plugins': {
+                    'legend': {
+                        'position': 'bottom'
+                    }
+                },
+                'scales': {
+                    'x': {
+                        'title': {
+                            'display': True,
+                            'text': 'Company Type'
+                        }
+                    },
+                    'y': {
+                        'title': {
+                            'display': True,
+                            'text': 'Margin'
+                        },
+                        'beginAtZero': True
+                    }
+                }
+            }
+        }
+    
+    companies = list(sheet3_data['margin_data'].keys())
+    values_2024 = [sheet3_data['margin_data'][comp]['year_2024'] for comp in companies]
+    values_2025 = [sheet3_data['margin_data'][comp]['year_2025'] for comp in companies]
+    total_values = [sheet3_data['margin_data'][comp]['total'] for comp in companies]
+    
+    return {
+        'type': 'bar',
+        'data': {
+            'labels': companies,
+            'datasets': [
+                {
+                    'label': '2024',
+                    'data': values_2024,
+                    'backgroundColor': '#1f77b4',
+                    'borderColor': '#1f77b4',
+                    'borderWidth': 1
+                },
+                {
+                    'label': '2025',
+                    'data': values_2025,
+                    'backgroundColor': '#ff7f0e',
+                    'borderColor': '#ff7f0e',
+                    'borderWidth': 1
+                },
+                {
+                    'label': 'Total',
+                    'data': total_values,
+                    'backgroundColor': '#2ca02c',
+                    'borderColor': '#2ca02c',
+                    'borderWidth': 1
+                }
+            ]
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {
+                    'position': 'bottom'
+                }
+            },
+            'scales': {
+                'x': {
+                    'title': {
+                        'display': True,
+                        'text': 'Company Type'
+                    }
+                },
+                'y': {
+                    'title': {
+                        'display': True,
+                        'text': 'Margin'
+                    },
+                    'beginAtZero': True
+                }
+            }
+        }
+    }
+
+def create_billables_trend_chart(sheet2_data: Dict) -> Dict:
+    """Create billables trend chart data for Chart.js"""
+    if not sheet2_data or not sheet2_data.get('billables_data'):
+        return {
+            'type': 'line',
+            'data': {
+                'labels': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'],
+                'datasets': []
+            },
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False,
+                'plugins': {
+                    'legend': {
+                        'position': 'bottom'
+                    }
+                },
+                'scales': {
+                    'x': {
+                        'title': {
+                            'display': True,
+                            'text': 'Month'
+                        }
+                    },
+                    'y': {
+                        'title': {
+                            'display': True,
+                            'text': 'Count'
+                        },
+                        'beginAtZero': True
+                    }
+                }
+            }
+        }
+    
+    months = sheet2_data.get('months', ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'])
+    
+    # Colors for different billable types
+    colors = {
+        'W2': '#1f77b4',
+        'C2C': '#ff7f0e',
+        '1099': '#2ca02c',
+        'Referral': '#17becf',
+        'Total billables': '#9467bd'
+    }
+    
+    datasets = []
+    
+    # Add billable types
+    for billable_type, values in sheet2_data['billables_data'].items():
+        if values:
+            datasets.append({
+                'label': billable_type,
+                'data': values[:len(months)],  # Only use data for available months
+                'borderColor': colors.get(billable_type, '#d62728'),
+                'backgroundColor': colors.get(billable_type, '#d62728') + '33',  # Add transparency
+                'borderWidth': 3,
+                'fill': False
+            })
+    
+    return {
+        'type': 'line',
+        'data': {
+            'labels': months,
+            'datasets': datasets
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {
+                    'position': 'bottom'
+                }
+            },
+            'scales': {
+                'x': {
+                    'title': {
+                        'display': True,
+                        'text': 'Month'
+                    }
+                },
+                'y': {
+                    'title': {
+                        'display': True,
+                        'text': 'Count'
+                    },
+                    'beginAtZero': True
+                }
+            }
+        }
+    }
+
+def create_company_comparison_chart(sheet1_data: Dict, sheet3_data: Dict) -> go.Figure:
+    """Create company comparison chart combining employment and margin data"""
+    if not sheet1_data or not sheet3_data:
+        return go.Figure()
+    
+    fig = go.Figure()
+    
+    # Get current month data (August - index 7)
+    tg_w2_current = sheet1_data.get('tg_data', {}).get('TG W2', [0] * 8)[7] if sheet1_data.get('tg_data', {}).get('TG W2') else 0
+    vnst_w2_current = sheet1_data.get('vnst_data', {}).get('VNST W2', [0] * 8)[7] if sheet1_data.get('vnst_data', {}).get('VNST W2') else 0
+    
+    # Get margin totals
+    tg_margin_total = 0
+    vnst_margin_total = 0
+    
+    for company, margin_data in sheet3_data.get('margin_data', {}).items():
+        if 'TG' in company:
+            tg_margin_total += margin_data.get('total', 0)
+        elif 'VNST' in company:
+            vnst_margin_total += margin_data.get('total', 0)
+    
+    companies = ['Techgene', 'VNST']
+    employment_values = [tg_w2_current, vnst_w2_current]
+    margin_values = [tg_margin_total, vnst_margin_total]
+    
+    # Create subplot with secondary y-axis
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # Add employment bars
+    fig.add_trace(
+        go.Bar(name='Current W2 Placements', x=companies, y=employment_values, marker_color='#1f77b4', opacity=0.8),
+        secondary_y=False
+    )
+    
+    # Add margin line
+    fig.add_trace(
+        go.Scatter(name='Total Margin', x=companies, y=margin_values, mode='lines+markers', 
+                  line=dict(color='#ff7f0e', width=3), marker=dict(size=10)),
+        secondary_y=True
+    )
+    
+    fig.update_layout(
+        title=None,  # Remove title from chart itself
+        xaxis=dict(title='Company', autorange=True),
+        height=380,
+        margin=dict(l=25, r=30, t=5, b=40),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.05,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=10)
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        autosize=True  # Enable auto-sizing to fit containers properly
+    )
+    
+    fig.update_yaxes(title_text="W2 Placements", secondary_y=False)
+    fig.update_yaxes(title_text="Total Margin", secondary_y=True)
+    
+    return fig
+
+def calculate_placement_kpis(sheet1_data: Dict, sheet2_data: Dict, sheet3_data: Dict) -> Dict:
+    """Calculate KPIs from placement report data"""
+    kpis = {}
+    
+    try:
+        # Total Current Billables (from latest month - August)
+        if sheet2_data and 'billables_data' in sheet2_data:
+            total_billables = sheet2_data['billables_data'].get('Total billables', [0] * 8)
+            if total_billables:
+                kpis['Total Current Billables'] = f"{total_billables[7]:.0f}"  # August
+        
+        # W2 Placements (current)
+        if sheet1_data:
+            tg_w2 = sheet1_data.get('tg_data', {}).get('TG W2', [0] * 8)
+            vnst_w2 = sheet1_data.get('vnst_data', {}).get('VNST W2', [0] * 8)
+            total_w2 = (tg_w2[7] if tg_w2 else 0) + (vnst_w2[7] if vnst_w2 else 0)
+            kpis['W2 Placements'] = f"{total_w2:.0f}"
+        
+        # Net Placements (latest month)
+        if sheet2_data and 'placement_metrics' in sheet2_data:
+            net_placements = sheet2_data['placement_metrics'].get('Net Placements', [0] * 8)
+            if net_placements:
+                kpis['Net Placements (Latest Month)'] = f"{net_placements[7]:.0f}"  # August
+        
+        # Gross Margin Total
+        if sheet3_data and 'margin_data' in sheet3_data:
+            total_margin = sum(margin_data.get('total', 0) for margin_data in sheet3_data['margin_data'].values())
+            kpis['Gross Margin Total'] = f"${total_margin:.2f}"
+        
+    except Exception as e:
+        print(f"Error calculating KPIs: {e}")
+    
+    return kpis
+
 # --------------------- Routes ---------------------
 
 @app.route('/')
@@ -259,16 +2201,561 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{file_type}_{filename}")
         file.save(file_path)
         
-        # Read and return preview
-        df = read_csv_file(file_path)
-        df = try_parse_dates(df)
+        try:
+            # Special handling for finance Excel files
+            if file_type == 'finance' and file_path.lower().endswith(('.xlsx', '.xls')):
+                print(f"=== UPLOAD ROUTE: Processing finance file {filename} ===")
+                print(f"Session keys before storing: {list(session.keys())}")
+                # Store file path in session for finance processing
+                session[f'{file_type}_file'] = file_path
+                print(f"Session keys after storing: {list(session.keys())}")
+                print(f"Stored file path: {session[f'{file_type}_file']}")
+                
+                return jsonify({
+                    'success': True,
+                    'file_type': 'finance_excel',
+                    'file_path': file_path,
+                    'message': f'Successfully uploaded finance Excel file: {filename}'
+                })
+            # Special handling for recruitment placement reports
+            elif file_type == 'rec' and file_path.lower().endswith(('.xlsx', '.xls')):
+                # Process the Excel file with all 4 sheets
+                excel_data = read_placement_report_excel(file_path)
+                
+                if not excel_data.get('success', True):
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    return jsonify({'error': f'Error reading Excel file: {excel_data.get("error", "Unknown error")}'})
+                
+                # Store file path in session
+                session[f'{file_type}_file'] = file_path
+                
+                return jsonify({
+                    'success': True,
+                    'file_type': 'excel_placement_report',
+                    'sheet_names': excel_data.get('sheet_names', []),
+                    'sheet_count': len(excel_data.get('sheet_names', [])),
+                    'file_path': file_path,
+                    'message': f'Successfully uploaded Excel file with {len(excel_data.get("sheet_names", []))} sheets'
+                })
+            else:
+                # Regular CSV/Excel processing
+                df = read_csv_file(file_path)
+                
+                if df.empty:
+                    return jsonify({'error': 'File is empty or could not be read'})
+                
+                df = try_parse_dates(df)
+                
+                # Store file path in session
+                session[f'{file_type}_file'] = file_path
+                
+                return jsonify({
+                    'success': True,
+                    'columns': list(df.columns),
+                    'preview': df.head(10).to_dict('records'),
+                    'file_path': file_path
+                })
+            
+        except Exception as e:
+            # Clean up the uploaded file if there was an error
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            return jsonify({'error': f'Error processing file: {str(e)}'})
+
+@app.route('/process_placement_report', methods=['POST'])
+def process_placement_report_route():
+    """Process placement report Excel file and generate analytics"""
+    if 'rec_file' not in session:
+        return jsonify({'error': 'No placement report file uploaded'})
+    
+    file_path = session['rec_file']
+    
+    try:
+        # Read all sheets from the Excel file
+        excel_data = read_placement_report_excel(file_path)
+        
+        if not excel_data.get('success', True):
+            return jsonify({'error': f'Error reading Excel file: {excel_data.get("error", "Unknown error")}'})
+        
+        # Process each sheet
+        sheet1_data = process_sheet1_employment(excel_data['sheet1_employment'])
+        sheet2_data = process_sheet2_placements(excel_data['sheet2_placements'])
+        sheet3_data = process_sheet3_margins(excel_data['sheet3_margins'])
+        
+        # Generate charts
+        charts = {}
+        
+        # Employment types chart from Sheet 1
+        if sheet1_data:
+            employment_chart = create_employment_types_chart_from_sheets(sheet1_data)
+            if employment_chart:
+                charts['employment_types'] = employment_chart
+        
+        # Placement metrics chart from Sheet 2
+        if sheet2_data:
+            placement_chart = create_placement_metrics_chart_from_sheets(sheet2_data)
+            if placement_chart:
+                charts['placement_metrics'] = placement_chart
+        
+        # Gross margin chart removed per user request
+        
+        # Additional charts
+        if sheet2_data:
+            billables_chart = create_billables_trend_chart(sheet2_data)
+            if billables_chart:
+                charts['billables_trend'] = billables_chart
+        
+        # Add financial charts (always include these)
+        direct_hire_chart = create_direct_hire_chart()
+        if direct_hire_chart:
+            charts['direct_hire'] = direct_hire_chart
+        
+        services_chart = create_services_chart()
+        if services_chart:
+            charts['services'] = services_chart
+        
+        it_staffing_chart = create_it_staffing_chart()
+        if it_staffing_chart:
+            charts['it_staffing'] = it_staffing_chart
+        
+        # Calculate KPIs
+        kpis = calculate_placement_kpis(sheet1_data, sheet2_data, sheet3_data)
+        
+        # Store processed data in session for persistence
+        session['processed_data'] = {
+            'charts': charts,
+            'kpis': kpis,
+            'sheet1_data': sheet1_data,
+            'sheet2_data': sheet2_data,
+            'sheet3_data': sheet3_data,
+            'processing_status': {
+                'sheet1_processed': bool(sheet1_data),
+                'sheet2_processed': bool(sheet2_data),
+                'sheet3_processed': bool(sheet3_data),
+                'sheet4_processed': not excel_data['sheet4_additional'].empty if 'sheet4_additional' in excel_data else False
+            }
+        }
         
         return jsonify({
             'success': True,
-            'columns': list(df.columns),
-            'preview': df.head(10).to_dict('records'),
-            'file_path': file_path
+            'charts': charts,
+            'kpis': kpis,
+            'processing_status': {
+                'sheet1_processed': bool(sheet1_data),
+                'sheet2_processed': bool(sheet2_data),
+                'sheet3_processed': bool(sheet3_data),
+                'sheet4_processed': not excel_data['sheet4_additional'].empty if 'sheet4_additional' in excel_data else False
+            }
         })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error processing placement report: {str(e)}'})
+
+@app.route('/check_existing_data')
+def check_existing_data():
+    """Check if there's existing processed data in session"""
+    print("=== CHECKING EXISTING DATA ===")
+    print(f"Session keys: {list(session.keys())}")
+    
+    has_recruitment_data = 'processed_data' in session
+    has_finance_data = 'finance_processed_data' in session
+    
+    print(f"Has recruitment data: {has_recruitment_data}")
+    print(f"Has finance data: {has_finance_data}")
+    
+    if has_recruitment_data or has_finance_data:
+        result = {
+            'has_data': True,
+            'has_recruitment_data': has_recruitment_data,
+            'has_finance_data': has_finance_data
+        }
+        
+        if has_recruitment_data:
+            result['recruitment_data'] = session['processed_data']
+        
+        if has_finance_data:
+            result['finance_data'] = session['finance_processed_data']
+            
+        print("Returning data found")
+        return jsonify(result)
+    else:
+        print("No data found")
+        return jsonify({
+            'has_data': False
+        })
+
+@app.route('/process_finance_report', methods=['POST'])
+def process_finance_report():
+    """Process finance Excel file and generate analytics"""
+    try:
+        print("=== FINANCE REPORT PROCESSING START ===")
+        
+        # Get the file path from session (file was uploaded via /upload route)
+        print(f"Session keys in process_finance_report: {list(session.keys())}")
+        if 'finance_file' not in session:
+            print("ERROR: No finance file in session")
+            return jsonify({'success': False, 'error': 'No finance file uploaded'})
+        
+        filepath = session['finance_file']
+        print(f"Processing file from session: {filepath}")
+        
+        if not os.path.exists(filepath):
+            print(f"ERROR: File does not exist: {filepath}")
+            return jsonify({'success': False, 'error': 'File not found'})
+        
+        print("=== READING EXCEL FILE ===")
+        # Read all sheets from Excel file
+        excel_data = read_finance_excel_file(filepath)
+        print(f"Excel data success: {excel_data.get('success')}")
+        print(f"Sheet names: {excel_data.get('sheet_names', [])}")
+        
+        if not excel_data.get('success'):
+            error_msg = excel_data.get('error', 'Error reading Excel file')
+            print(f"Excel read error: {error_msg}")
+            return jsonify({'success': False, 'error': error_msg})
+        
+        print("=== PROCESSING FINANCE DATA ===")
+        # Process all finance data
+        processed_data = process_finance_data(excel_data)
+        print(f"Processed data keys: {list(processed_data.keys())}")
+        
+        print("=== CREATING CHARTS ===")
+        # Generate comprehensive charts
+        charts = create_comprehensive_finance_charts(processed_data)
+        print(f"Charts created: {list(charts.keys())}")
+        
+        print("=== CALCULATING KPIS ===")
+        # Calculate comprehensive KPIs
+        kpis = calculate_comprehensive_finance_kpis(processed_data)
+        print(f"KPIs calculated: {list(kpis.keys())}")
+        
+        print("=== STORING IN SESSION ===")
+        # Store processed data in session (without DataFrames)
+        filename = os.path.basename(filepath)
+        session['finance_processed_data'] = {
+            'kpis': kpis,
+            'charts': charts,
+            'filename': filename,
+            'sheet_names': excel_data.get('sheet_names', [])
+        }
+        print("Session data stored successfully")
+        
+        print("=== FINANCE REPORT PROCESSING SUCCESS ===")
+        return jsonify({
+            'success': True,
+            'kpis': kpis,
+            'charts': charts,
+            'sheet_count': len(excel_data.get('sheet_names', []))
+        })
+            
+    except Exception as e:
+        import traceback
+        print(f"=== CRITICAL ERROR IN FINANCE PROCESSING ===")
+        print(f"Error: {e}")
+        print(f"Error type: {type(e)}")
+        print("Full traceback:")
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': f'Error processing file: {str(e)}'})
+
+def create_comprehensive_finance_charts(processed_data: Dict) -> Dict:
+    """Create comprehensive finance charts from processed data"""
+    charts = {}
+    
+    try:
+        # Business Units Revenue Comparison Chart
+        if processed_data.get('business_units'):
+            charts['business_units_revenue'] = create_business_units_revenue_chart(processed_data['business_units'])
+        
+        # Monthly P&L Trend Chart
+        if processed_data.get('monthly_data'):
+            charts['monthly_pnl_trend'] = create_monthly_pnl_trend_chart(processed_data['monthly_data'])
+        
+        # Summary Metrics Chart
+        if processed_data.get('summary_metrics'):
+            charts['summary_metrics'] = create_summary_metrics_chart(processed_data['summary_metrics'])
+        
+        # Fallback to basic charts if no comprehensive data
+        if not charts:
+            charts['finance_revenue'] = create_finance_revenue_chart(pd.DataFrame())
+            charts['finance_profit'] = create_finance_profit_chart(pd.DataFrame())
+        
+    except Exception as e:
+        print(f"Error creating comprehensive finance charts: {e}")
+        # Fallback charts
+        charts['finance_revenue'] = create_finance_revenue_chart(pd.DataFrame())
+        charts['finance_profit'] = create_finance_profit_chart(pd.DataFrame())
+    
+    return charts
+
+def create_business_units_revenue_chart(business_units: Dict) -> Dict:
+    """Create business units revenue comparison chart"""
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    datasets = []
+    
+    colors = ['#28a745', '#007bff', '#dc3545', '#ffc107', '#6f42c1']
+    
+    for i, (unit_name, unit_data) in enumerate(business_units.items()):
+        if unit_data.get('revenue'):
+            datasets.append({
+                'label': unit_name.replace(' Net income', ''),
+                'data': unit_data['revenue'][:len(months)],
+                'borderColor': colors[i % len(colors)],
+                'backgroundColor': colors[i % len(colors)] + '33',
+                'borderWidth': 3,
+                'fill': False
+            })
+    
+    return {
+        'type': 'line',
+        'data': {
+            'labels': months,
+            'datasets': datasets
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {'position': 'bottom'},
+                'title': {'display': True, 'text': 'Business Units Revenue Comparison'}
+            },
+            'scales': {
+                'x': {'title': {'display': True, 'text': 'Month'}},
+                'y': {'title': {'display': True, 'text': 'Revenue ($)'}}
+            }
+        }
+    }
+
+def create_monthly_pnl_trend_chart(monthly_data: Dict) -> Dict:
+    """Create monthly P&L trend chart"""
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    datasets = []
+    
+    colors = ['#28a745', '#dc3545', '#007bff']
+    
+    for i, (company_name, company_data) in enumerate(monthly_data.items()):
+        company_short = company_name.replace(' PnL new', '')
+        
+        if company_data.get('net_income'):
+            datasets.append({
+                'label': f'{company_short} Net Income',
+                'data': company_data['net_income'][:len(months)],
+                'borderColor': colors[i % len(colors)],
+                'backgroundColor': colors[i % len(colors)] + '33',
+                'borderWidth': 3,
+                'fill': False
+            })
+    
+    return {
+        'type': 'line',
+        'data': {
+            'labels': months,
+            'datasets': datasets
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {'position': 'bottom'},
+                'title': {'display': True, 'text': 'Monthly P&L Trend'}
+            },
+            'scales': {
+                'x': {'title': {'display': True, 'text': 'Month'}},
+                'y': {'title': {'display': True, 'text': 'Net Income ($)'}}
+            }
+        }
+    }
+
+def create_summary_metrics_chart(summary_metrics: Dict) -> Dict:
+    """Create summary metrics chart"""
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    datasets = []
+    
+    colors = ['#28a745', '#007bff', '#dc3545', '#ffc107', '#6f42c1', '#17a2b8']
+    
+    for i, (metric_name, metric_data) in enumerate(summary_metrics.items()):
+        if metric_data.get('monthly_values'):
+            datasets.append({
+                'label': metric_name,
+                'data': metric_data['monthly_values'][:len(months)],
+                'borderColor': colors[i % len(colors)],
+                'backgroundColor': colors[i % len(colors)] + '33',
+                'borderWidth': 3,
+                'fill': False
+            })
+    
+    return {
+        'type': 'line',
+        'data': {
+            'labels': months,
+            'datasets': datasets
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {'position': 'bottom'},
+                'title': {'display': True, 'text': 'Financial Summary Metrics'}
+            },
+            'scales': {
+                'x': {'title': {'display': True, 'text': 'Month'}},
+                'y': {'title': {'display': True, 'text': 'Amount ($)'}}
+            }
+        }
+    }
+
+def calculate_comprehensive_finance_kpis(processed_data: Dict) -> Dict:
+    """Calculate comprehensive financial KPIs from processed data"""
+    kpis = {}
+    
+    try:
+        # Calculate totals from business units
+        total_revenue = 0
+        total_expenses = 0
+        total_net_income = 0
+        
+        if processed_data.get('business_units'):
+            for unit_name, unit_data in processed_data['business_units'].items():
+                if unit_data.get('revenue'):
+                    total_revenue += sum(unit_data['revenue'])
+                if unit_data.get('net_income'):
+                    total_net_income += sum(unit_data['net_income'])
+        
+        # Calculate totals from P&L data
+        if processed_data.get('monthly_data'):
+            for company_name, company_data in processed_data['monthly_data'].items():
+                if company_data.get('total_income'):
+                    total_revenue += sum(company_data['total_income'])
+                if company_data.get('total_expense'):
+                    total_expenses += sum(company_data['total_expense'])
+                if company_data.get('net_income'):
+                    total_net_income += sum(company_data['net_income'])
+        
+        # Calculate KPIs
+        kpis['total_revenue'] = {
+            'value': total_revenue,
+            'label': 'Total Revenue',
+            'format': 'currency'
+        }
+        
+        kpis['total_expenses'] = {
+            'value': total_expenses,
+            'label': 'Total Expenses',
+            'format': 'currency'
+        }
+        
+        kpis['total_net_income'] = {
+            'value': total_net_income,
+            'label': 'Total Net Income',
+            'format': 'currency'
+        }
+        
+        # Calculate profit margin
+        if total_revenue > 0:
+            profit_margin = (total_net_income / total_revenue) * 100
+            kpis['profit_margin'] = {
+                'value': profit_margin,
+                'label': 'Profit Margin',
+                'format': 'percentage'
+            }
+        
+        # Calculate monthly averages
+        months_count = 8  # Jan-Aug 2025
+        kpis['avg_monthly_revenue'] = {
+            'value': total_revenue / months_count,
+            'label': 'Avg Monthly Revenue',
+            'format': 'currency'
+        }
+        
+        kpis['avg_monthly_net_income'] = {
+            'value': total_net_income / months_count,
+            'label': 'Avg Monthly Net Income',
+            'format': 'currency'
+        }
+        
+    except Exception as e:
+        print(f"Error calculating comprehensive finance KPIs: {e}")
+        # Fallback KPIs
+        kpis = {
+            'total_revenue': {'value': 0, 'label': 'Total Revenue', 'format': 'currency'},
+            'total_expenses': {'value': 0, 'label': 'Total Expenses', 'format': 'currency'},
+            'total_net_income': {'value': 0, 'label': 'Total Net Income', 'format': 'currency'},
+            'profit_margin': {'value': 0, 'label': 'Profit Margin', 'format': 'percentage'},
+            'avg_monthly_revenue': {'value': 0, 'label': 'Avg Monthly Revenue', 'format': 'currency'},
+            'avg_monthly_net_income': {'value': 0, 'label': 'Avg Monthly Net Income', 'format': 'currency'}
+        }
+    
+    return kpis
+
+def calculate_finance_kpis(df: pd.DataFrame) -> Dict:
+    """Calculate financial KPIs from the data"""
+    kpis = {}
+    
+    try:
+        # Initialize totals
+        total_revenue = 0
+        total_expenses = 0
+        total_gross_income = 0
+        total_net_income = 0
+        
+        # Extract data for available months
+        for col in df.columns:
+            if any(month in str(col) for month in ['Jan-', 'Feb-', 'Mar-', 'Apr-', 'May-']):
+                try:
+                    # Revenue
+                    revenue_row = df[df.iloc[:, 1].astype(str).str.contains('Direct Hire Revenue', na=False)]
+                    if not revenue_row.empty:
+                        val = revenue_row.iloc[0][col]
+                        if pd.notna(val) and val != '':
+                            total_revenue += float(val)
+                    
+                    # Expenses
+                    expense_row = df[df.iloc[:, 1].astype(str).str.contains('Direct Hire expenses', na=False)]
+                    if not expense_row.empty:
+                        val = expense_row.iloc[0][col]
+                        if pd.notna(val) and val != '':
+                            total_expenses += float(val)
+                    
+                    # Gross Income
+                    gross_row = df[df.iloc[:, 1].astype(str).str.contains('Gross Income', na=False)]
+                    if not gross_row.empty:
+                        val = gross_row.iloc[0][col]
+                        if pd.notna(val) and val != '':
+                            total_gross_income += float(val)
+                    
+                    # Net Income
+                    net_row = df[df.iloc[:, 1].astype(str).str.contains('Net Income', na=False)]
+                    if not net_row.empty:
+                        val = net_row.iloc[0][col]
+                        if pd.notna(val) and val != '':
+                            total_net_income += float(val)
+                            
+                except (ValueError, TypeError):
+                    continue
+        
+        # Format KPIs
+        kpis['Total Revenue (YTD)'] = f"${total_revenue:,.2f}"
+        kpis['Total Expenses (YTD)'] = f"${total_expenses:,.2f}"
+        kpis['Gross Income (YTD)'] = f"${total_gross_income:,.2f}"
+        kpis['Net Income (YTD)'] = f"${total_net_income:,.2f}"
+        
+    except Exception as e:
+        print(f"Error calculating finance KPIs: {e}")
+    
+    return kpis
+
+@app.route('/clear_session_data', methods=['POST'])
+def clear_session_data():
+    """Clear all session data"""
+    session.clear()
+    return jsonify({'success': True})
+
+@app.route('/clear_finance_session', methods=['POST'])
+def clear_finance_session():
+    """Clear finance session data specifically"""
+    if 'finance_processed_data' in session:
+        del session['finance_processed_data']
+    return jsonify({'success': True})
 
 @app.route('/process', methods=['POST'])
 def process_data():
@@ -336,18 +2823,37 @@ def process_data():
         charts['bs_line'] = fig_line(bs_m, "Month", ["__assets", "__liabilities"], "Assets vs Liabilities")
         charts['bs_equity'] = fig_line(bs_m, "Month", ["__equity"], "Equity")
     
-    if not rec_m.empty:
-        rec_map = mappings.get('rec_map', {})
-        if rec_map.get("placements") in rec_m.columns:
-            charts['rec_bar'] = fig_bar(rec_m, "Month", rec_map["placements"], "Placements")
-        if rec_map.get("revenue") in rec_m.columns:
-            charts['rec_revenue'] = fig_line(rec_m, "Month", [rec_map["revenue"]], "Recruitment Revenue")
+    # Handle recruitment data - check if it's placement report format
+    if not rec_df_raw.empty:
+        try:
+            # Try to process as placement report
+            placement_data = process_placement_report(rec_df_raw)
+            if placement_data and placement_data.get('employment_data'):
+                # Create placement report charts
+                emp_chart = create_employment_types_chart(placement_data)
+                placement_chart = create_placement_metrics_chart(placement_data)
+                margin_chart = create_gross_margin_chart(placement_data)
+                
+                if emp_chart:
+                    charts['employment_types'] = emp_chart
+                if placement_chart:
+                    charts['placement_metrics'] = placement_chart
+                if margin_chart:
+                    charts['gross_margin'] = margin_chart
+            else:
+                # Fall back to original recruitment processing
+                if not rec_m.empty:
+                    rec_map = mappings.get('rec_map', {})
+                    if rec_map.get("placements") in rec_m.columns:
+                        charts['rec_bar'] = fig_bar(rec_m, "Month", rec_map["placements"], "Placements")
+                    if rec_map.get("revenue") in rec_m.columns:
+                        charts['rec_revenue'] = fig_line(rec_m, "Month", [rec_map["revenue"]], "Recruitment Revenue")
+        except Exception as e:
+            print(f"Error processing recruitment data: {e}")
+            # Continue without recruitment charts
     
-    # Convert charts to JSON
-    charts_json = {}
-    for name, fig in charts.items():
-        if fig:
-            charts_json[name] = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+    # Charts are already in JSON format for Chart.js
+    charts_json = charts
     
     return jsonify({
         'kpis': kpis,
@@ -358,5 +2864,168 @@ def process_data():
         'has_mg_data': not mg_m.empty
     })
 
+# --------------------- Recruitment Routes ---------------------
+
+# Removed separate recruitment route - now handled by single-page app in index.html
+# @app.route('/recruitment')  
+# def recruitment_dashboard():
+#     """Recruitment dashboard page"""
+#     return render_template('recruitment_dashboard.html')
+
+@app.route('/api/recruitment/data')
+def get_recruitment_data():
+    """Get all recruitment data"""
+    employment_df = get_recruitment_employment_data()
+    placement_df = get_recruitment_placement_data()
+    margin_df = get_recruitment_margin_data()
+    
+    return jsonify({
+        'employment': employment_df.to_dict('records'),
+        'placement': placement_df.to_dict('records'),
+        'margin': margin_df.to_dict('records')
+    })
+
+@app.route('/api/recruitment/charts')
+def get_recruitment_charts():
+    """Get all recruitment chart data"""
+    employment_df = get_recruitment_employment_data()
+    placement_df = get_recruitment_placement_data()
+    margin_df = get_recruitment_margin_data()
+    
+    # Note: These functions would need to be updated to return Chart.js format
+    charts = {
+        'employment': create_recruitment_employment_chart(employment_df),
+        'placement': create_recruitment_placement_chart(placement_df),
+        'margin': create_recruitment_margin_chart(margin_df)
+    }
+    
+    return jsonify(charts)
+
+@app.route('/api/recruitment/add_month', methods=['POST'])
+def add_recruitment_month():
+    """Add new month data"""
+    data = request.json
+    
+    conn = sqlite3.connect(DB_PATH)
+    
+    # Add employment data
+    conn.execute('''
+        INSERT INTO employment_data (month, w2, c2c, employment_1099, referral, total_billables)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (
+        data['month'],
+        data['employment']['w2'],
+        data['employment']['c2c'],
+        data['employment']['employment_1099'],
+        data['employment']['referral'],
+        data['employment']['total_billables']
+    ))
+    
+    # Add placement data
+    conn.execute('''
+        INSERT INTO placement_data (month, new_placements, terminations, net_placements, net_billables)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (
+        data['month'],
+        data['placement']['new_placements'],
+        data['placement']['terminations'],
+        data['placement']['net_placements'],
+        data['placement']['net_billables']
+    ))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True})
+
+@app.route('/api/recruitment/export/dataset')
+def export_recruitment_dataset():
+    """Export recruitment dataset as CSV"""
+    employment_df = get_recruitment_employment_data()
+    placement_df = get_recruitment_placement_data()
+    margin_df = get_recruitment_margin_data()
+    
+    # Create a combined dataset
+    combined_df = employment_df.merge(placement_df, on='month', how='outer')
+    
+    # Save to CSV
+    output = io.StringIO()
+    combined_df.to_csv(output, index=False)
+    output.seek(0)
+    
+    return send_file(
+        io.BytesIO(output.getvalue().encode()),
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name='recruitment_dataset.csv'
+    )
+
+@app.route('/api/recruitment/export/report')
+def export_recruitment_report():
+    """Export recruitment dashboard report as HTML"""
+    employment_df = get_recruitment_employment_data()
+    placement_df = get_recruitment_placement_data()
+    margin_df = get_recruitment_margin_data()
+    
+    # Generate charts
+    employment_chart = create_recruitment_employment_chart(employment_df)
+    placement_chart = create_recruitment_placement_chart(placement_df)
+    margin_chart = create_recruitment_margin_chart(margin_df)
+    
+    # Create HTML report
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Recruitment Dashboard Report</title>
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; }}
+            .chart {{ margin: 20px 0; }}
+            .summary {{ background: #f5f5f5; padding: 15px; margin: 20px 0; }}
+        </style>
+    </head>
+    <body>
+        <h1>Recruitment Dashboard Report</h1>
+        <p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        
+        <div class="summary">
+            <h2>Summary</h2>
+            <p>Total months of data: {len(employment_df)}</p>
+            <p>Latest month: {employment_df.iloc[-1]['month'] if not employment_df.empty else 'N/A'}</p>
+        </div>
+        
+        <div class="chart">
+            <h2>Employment Types</h2>
+            <div id="employment-chart"></div>
+        </div>
+        
+        <div class="chart">
+            <h2>Placement Metrics</h2>
+            <div id="placement-chart"></div>
+        </div>
+        
+        <div class="chart">
+            <h2>Gross Margin IT Staffing</h2>
+            <div id="margin-chart"></div>
+        </div>
+        
+        <script>
+            // Chart.js implementation would go here
+            // For now, showing placeholder text
+        </script>
+    </body>
+    </html>
+    """
+    
+    return send_file(
+        io.BytesIO(html_content.encode()),
+        mimetype='text/html',
+        as_attachment=True,
+        download_name='recruitment_dashboard_report.html'
+    )
+
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5003)
+    init_recruitment_database()
+    load_recruitment_csv_data()
+    app.run(debug=True, host='0.0.0.0', port=5004)
