@@ -13,24 +13,13 @@ function scrollToTop() {
 function checkForExistingData() {
     console.log('=== CHECKING FOR EXISTING DATA ===');
     
-    // Check localStorage first
-    const recruitmentData = localStorage.getItem('recruitmentData');
-    const financeData = localStorage.getItem('financeData');
+    // DISABLED: Don't auto-load data on page load
+    // Users should explicitly upload files to see data
+    console.log('Auto-loading disabled - users must upload files to see data');
     
-    if (recruitmentData || financeData) {
-        console.log('Found existing data in localStorage, restoring dashboard...');
-        const response = {
-            has_data: true,
-            has_recruitment_data: !!recruitmentData,
-            has_finance_data: !!financeData,
-            recruitment_data: recruitmentData ? JSON.parse(recruitmentData) : null,
-            finance_data: financeData ? JSON.parse(financeData) : null
-        };
-        restoreDashboardFromData(response);
-    } else {
-        console.log('No existing data found in localStorage');
-        // No fallback to server - data should only come from browser storage
-    }
+    // Clear any existing localStorage data to prevent auto-loading
+    localStorage.removeItem('recruitmentData');
+    localStorage.removeItem('financeData');
 }
 
 function processFinanceReport() {
@@ -50,10 +39,12 @@ function processFinanceReport() {
                     charts: response.charts,
                     filename: response.filename,
                     sheet_names: response.sheet_names,
-                    processed_data: response.processed_data
+                    processed_data: response.processed_data,
+                    specific_values: response.specific_values
                 }));
                 
                 updateFinanceKPIs(response.kpis);
+                updateSpecificFinancialValues(response.specific_values);
                 renderFinanceCharts(response.charts);
                 
                 // Hide upload area and show dashboard
@@ -86,6 +77,28 @@ function showFinanceDashboardAfterUpload() {
     loadDataExplorerData();
     
     console.log('Finance dashboard UI update complete');
+}
+
+function updateSpecificFinancialValues(specificValues) {
+    console.log('=== UPDATING SPECIFIC FINANCIAL VALUES ===');
+    console.log('Specific values:', specificValues);
+    
+    if (specificValues) {
+        // Direct Hire values
+        $('#kpi-direct-hire-total-revenue').text(formatCurrency(specificValues.direct_hire?.total_revenue || 0));
+        $('#kpi-direct-hire-gross-income').text(formatCurrency(specificValues.direct_hire?.gross_income || 0));
+        $('#kpi-direct-hire-net-income').text(formatCurrency(specificValues.direct_hire?.net_income || 0));
+        
+        // IT Services values
+        $('#kpi-it-services-total-revenue').text(formatCurrency(specificValues.it_services?.total_revenue || 0));
+        $('#kpi-it-services-gross-income').text(formatCurrency(specificValues.it_services?.gross_income || 0));
+        $('#kpi-it-services-net-income').text(formatCurrency(specificValues.it_services?.net_income || 0));
+        
+        // IT Staffing values
+        $('#kpi-it-staffing-total-revenue').text(formatCurrency(specificValues.it_staffing?.total_revenue || 0));
+        $('#kpi-it-staffing-gross-income').text(formatCurrency(specificValues.it_staffing?.gross_income || 0));
+        $('#kpi-it-staffing-net-income').text(formatCurrency(specificValues.it_staffing?.net_income || 0));
+    }
 }
 
 function updateFinanceKPIs(kpis) {
@@ -984,6 +997,11 @@ function restoreDashboardFromData(response) {
             updateFinanceKPIs(data.kpis);
         }
         
+        // Update specific financial values
+        if (data.specific_values) {
+            updateSpecificFinancialValues(data.specific_values);
+        }
+        
         // Render charts
         if (data.charts) {
             renderFinanceCharts(data.charts);
@@ -1527,19 +1545,18 @@ function resetDashboard() {
 
 
 function updatePlacementKPIs(kpis) {
-    const kpiMapping = {
-        'Total Current Billables': 'kpi-total-billables',
-        'W2 Placements': 'kpi-w2-count',
-        'Net Placements (Latest Month)': 'kpi-net-placements',
-        'Gross Margin Total': 'kpi-gross-margin'
-    };
+    console.log('=== UPDATING PLACEMENT KPIS ===');
+    console.log('KPIs received:', kpis);
     
-    Object.keys(kpis).forEach(key => {
-        const kpiId = kpiMapping[key];
-        if (kpiId) {
-            $('#' + kpiId).text(kpis[key]);
-        }
-    });
+    if (kpis) {
+        // Update KPI values with proper mapping
+        $('#kpi-total-placements').text(kpis['Total Placements'] || '—');
+        $('#kpi-total-terminations').text(kpis['Total Terminations'] || '—');
+        $('#kpi-net-placements').text(kpis['Net Placements (Latest Month)'] || '—');
+        $('#kpi-total-billables').text(kpis['Total Current Billables'] || '—');
+        $('#kpi-w2-placements').text(kpis['W2 Placements'] || '—');
+        $('#kpi-c2c-placements').text(kpis['C2C Placements'] || '—');
+    }
 }
 
 function renderPlacementCharts(charts) {
@@ -1554,6 +1571,7 @@ function renderPlacementCharts(charts) {
             'employment_types': 'chart-employment-types',
             'placement_metrics': 'chart-placement-metrics',
             'billables_trend': 'chart-billables-trend',
+            'gross_margin': 'chart-gross-margin',
             'direct_hire': 'chart-direct-hire',
             'services': 'chart-services',
             'it_staffing': 'chart-it-staffing'
@@ -1847,6 +1865,7 @@ $(document).ready(function() {
 
 // Sidebar functionality
 function setupSidebarFileUpload() {
+    // Handle old sidebar uploads
     $('.file-upload-sidebar').each(function() {
         const $upload = $(this);
         const $input = $upload.find('input[type="file"]');
@@ -1886,6 +1905,92 @@ function setupSidebarFileUpload() {
                 handleSidebarFileUpload(file);
             }
         });
+    });
+    
+    // Handle new navigation uploads
+    $('.file-upload-nav').each(function() {
+        const $upload = $(this);
+        const $input = $upload.find('input[type="file"]');
+        const $area = $upload.find('.upload-area-nav');
+        const fileType = $input.attr('data-type');
+        
+        // Click to browse
+        $area.find('.browse-btn-nav').click(function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            $input.click();
+        });
+        
+        // Drag and drop
+        $upload.on('dragover', function(e) {
+            e.preventDefault();
+            $upload.addClass('dragover');
+        });
+        
+        $upload.on('dragleave', function(e) {
+            e.preventDefault();
+            $upload.removeClass('dragover');
+        });
+        
+        $upload.on('drop', function(e) {
+            e.preventDefault();
+            $upload.removeClass('dragover');
+            const files = e.originalEvent.dataTransfer.files;
+            if (files.length > 0) {
+                handleNavFileUpload(files[0], fileType);
+            }
+        });
+        
+        // File input change
+        $input.change(function() {
+            const file = this.files[0];
+            if (file) {
+                handleNavFileUpload(file, fileType);
+            }
+        });
+    });
+}
+
+function handleNavFileUpload(file, fileType) {
+    console.log('=== NAVIGATION FILE UPLOAD ===');
+    console.log('File:', file.name);
+    console.log('Type:', fileType);
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('type', fileType);
+    
+    $.ajax({
+        url: '/upload',
+        type: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false,
+        success: function(response) {
+            console.log('Navigation upload success:', response);
+            
+            // Switch to appropriate dashboard based on file type
+            if (fileType === 'finance') {
+                switchDashboard('finance');
+                // Process finance report
+                setTimeout(() => {
+                    processFinanceReport();
+                }, 500);
+            } else if (fileType === 'rec') {
+                switchDashboard('recruitment');
+                // Process recruitment report
+                setTimeout(() => {
+                    processPlacementReport();
+                }, 500);
+            }
+            
+            // Close sidebar after upload
+            toggleSidebar();
+        },
+        error: function(xhr, status, error) {
+            console.error('Navigation upload error:', xhr.responseText);
+            alert('Upload failed: ' + (xhr.responseJSON?.error || error));
+        }
     });
 }
 

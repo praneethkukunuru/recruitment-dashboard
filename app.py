@@ -266,12 +266,21 @@ def read_placement_report_excel(file_path: str) -> Dict:
             except Exception as e:
                 print(f"Error reading sheet 2: {e}")
         
-        # Read Sheet 3: Gross Margin Data (2024/2025)
-        if len(sheet_names) > 2:
+        # Read Gross Margin Data (look for sheet with 'gross' or 'margin' in name)
+        gross_margin_sheet = None
+        for sheet_name in sheet_names:
+            if 'gross' in sheet_name.lower() or 'margin' in sheet_name.lower():
+                gross_margin_sheet = sheet_name
+                break
+        
+        if gross_margin_sheet:
             try:
-                result['sheet3_margins'] = pd.read_excel(file_path, sheet_name=sheet_names[2])
+                result['sheet3_margins'] = pd.read_excel(file_path, sheet_name=gross_margin_sheet)
+                print(f"Found gross margin sheet: {gross_margin_sheet}")
             except Exception as e:
-                print(f"Error reading sheet 3: {e}")
+                print(f"Error reading gross margin sheet: {e}")
+        else:
+            print("No gross margin sheet found")
         
         # Read Sheet 4: Additional Charts/Data
         if len(sheet_names) > 3:
@@ -577,24 +586,32 @@ def process_sheet3_margins(df: pd.DataFrame) -> Dict:
     
     # Try to find data in the Excel file first
     data_found = False
-    for company in company_types:
-        for idx, row in df.iterrows():
-            if pd.notna(row.iloc[0]) and company.lower() in str(row.iloc[0]).lower():
-                try:
-                    year_2024 = float(row.iloc[1]) if pd.notna(row.iloc[1]) else 0
-                    year_2025 = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0
-                    total = float(row.iloc[3]) if pd.notna(row.iloc[3]) else (year_2024 + year_2025)
-                    
-                    result['margin_data'][company] = {
-                        'year_2024': year_2024,
-                        'year_2025': year_2025,
-                        'total': total
-                    }
-                    result['companies'].append(company)
-                    data_found = True
-                    break
-                except (ValueError, TypeError, IndexError):
-                    continue
+    
+    # Process the actual data from the gross margin sheet
+    for idx, row in df.iterrows():
+        if pd.notna(row.iloc[0]) and str(row.iloc[0]).strip():
+            company_name = str(row.iloc[0]).strip()
+            
+            # Skip header row
+            if company_name.lower() in ['2024', '2025', 'total', 'nan']:
+                continue
+                
+            try:
+                year_2024 = float(row.iloc[1]) if pd.notna(row.iloc[1]) else 0
+                year_2025 = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0
+                total = float(row.iloc[3]) if pd.notna(row.iloc[3]) else (year_2024 + year_2025)
+                
+                result['margin_data'][company_name] = {
+                    'year_2024': year_2024,
+                    'year_2025': year_2025,
+                    'total': total
+                }
+                result['companies'].append(company_name)
+                data_found = True
+                print(f"Processed margin data for {company_name}: 2024={year_2024}, 2025={year_2025}, total={total}")
+            except (ValueError, TypeError, IndexError) as e:
+                print(f"Error processing row {idx} for {company_name}: {e}")
+                continue
     
     # If no data found in Excel, use sample data
     if not data_found:
@@ -1251,6 +1268,108 @@ def extract_summary_metrics(df: pd.DataFrame) -> Dict:
         print(f"Error extracting summary metrics: {e}")
     
     return metrics
+
+def extract_specific_financial_values(excel_data: Dict) -> Dict:
+    """Extract the 9 specific financial values as requested:
+    
+    Direct Hire:
+    - Total Revenue (Direct Hire Net income sheet O3)
+    - Gross Income (Direct Hire Net income sheet O7)  
+    - Net Income (Direct Hire Net income sheet O11)
+    
+    IT Services:
+    - Total Revenue (Services Net income sheet O3)
+    - Gross Income (Services Net income sheet O7)
+    - Net Income (Services Net income sheet O12)
+    
+    IT Staffing:
+    - Total Revenue (IT Staffing Net income sheet P7)
+    - Gross Income (IT Staffing Net income sheet P16)
+    - Net Income (IT Staffing Net income sheet P22)
+    """
+    result = {
+        'direct_hire': {
+            'total_revenue': 0,
+            'gross_income': 0,
+            'net_income': 0
+        },
+        'it_services': {
+            'total_revenue': 0,
+            'gross_income': 0,
+            'net_income': 0
+        },
+        'it_staffing': {
+            'total_revenue': 0,
+            'gross_income': 0,
+            'net_income': 0
+        }
+    }
+    
+    if not excel_data or not excel_data.get('success'):
+        return result
+    
+    sheets = excel_data.get('sheets', {})
+    
+    try:
+        # Extract Direct Hire values
+        if 'Direct Hire Net income' in sheets:
+            df = sheets['Direct Hire Net income']
+            print(f"Direct Hire sheet shape: {df.shape}")
+            
+            # Total Revenue (O3) - Row 1, Column 14 (0-indexed: row 1, col 14)
+            if df.shape[0] > 1 and df.shape[1] > 14:
+                result['direct_hire']['total_revenue'] = float(df.iloc[1, 14]) if pd.notna(df.iloc[1, 14]) else 0
+            
+            # Gross Income (O7) - Row 5, Column 14
+            if df.shape[0] > 5 and df.shape[1] > 14:
+                result['direct_hire']['gross_income'] = float(df.iloc[5, 14]) if pd.notna(df.iloc[5, 14]) else 0
+            
+            # Net Income (O11) - Row 9, Column 14
+            if df.shape[0] > 9 and df.shape[1] > 14:
+                result['direct_hire']['net_income'] = float(df.iloc[9, 14]) if pd.notna(df.iloc[9, 14]) else 0
+        
+        # Extract IT Services values
+        if 'Services Net income' in sheets:
+            df = sheets['Services Net income']
+            print(f"Services sheet shape: {df.shape}")
+            
+            # Total Revenue (O3) - Row 1, Column 14
+            if df.shape[0] > 1 and df.shape[1] > 14:
+                result['it_services']['total_revenue'] = float(df.iloc[1, 14]) if pd.notna(df.iloc[1, 14]) else 0
+            
+            # Gross Income (O7) - Row 5, Column 14
+            if df.shape[0] > 5 and df.shape[1] > 14:
+                result['it_services']['gross_income'] = float(df.iloc[5, 14]) if pd.notna(df.iloc[5, 14]) else 0
+            
+            # Net Income (O12) - Row 10, Column 14
+            if df.shape[0] > 10 and df.shape[1] > 14:
+                result['it_services']['net_income'] = float(df.iloc[10, 14]) if pd.notna(df.iloc[10, 14]) else 0
+        
+        # Extract IT Staffing values
+        if 'IT Staffing Net Income' in sheets:
+            df = sheets['IT Staffing Net Income']
+            print(f"IT Staffing sheet shape: {df.shape}")
+            
+            # Total Revenue (P7) - Row 5, Column 15
+            if df.shape[0] > 5 and df.shape[1] > 15:
+                result['it_staffing']['total_revenue'] = float(df.iloc[5, 15]) if pd.notna(df.iloc[5, 15]) else 0
+            
+            # Gross Income (P16) - Row 14, Column 15
+            if df.shape[0] > 14 and df.shape[1] > 15:
+                result['it_staffing']['gross_income'] = float(df.iloc[14, 15]) if pd.notna(df.iloc[14, 15]) else 0
+            
+            # Net Income (P22) - Row 20, Column 15
+            if df.shape[0] > 20 and df.shape[1] > 15:
+                result['it_staffing']['net_income'] = float(df.iloc[20, 15]) if pd.notna(df.iloc[20, 15]) else 0
+        
+        print(f"Extracted financial values: {result}")
+        
+    except Exception as e:
+        print(f"Error extracting specific financial values: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return result
 
 def extract_business_unit_data(df: pd.DataFrame) -> Dict:
     """Extract data from individual business unit sheets"""
@@ -2191,11 +2310,32 @@ def calculate_placement_kpis(sheet1_data: Dict, sheet2_data: Dict, sheet3_data: 
             total_w2 = (tg_w2[7] if tg_w2 else 0) + (vnst_w2[7] if vnst_w2 else 0)
             kpis['W2 Placements'] = f"{total_w2:.0f}"
         
+        # C2C Placements (current)
+        if sheet1_data:
+            tg_c2c = sheet1_data.get('tg_data', {}).get('TG C2C', [0] * 8)
+            vnst_c2c = sheet1_data.get('vnst_data', {}).get('VNST C2C', [0] * 8)
+            total_c2c = (tg_c2c[7] if tg_c2c else 0) + (vnst_c2c[7] if vnst_c2c else 0)
+            kpis['C2C Placements'] = f"{total_c2c:.0f}"
+        
         # Net Placements (latest month)
         if sheet2_data and 'placement_metrics' in sheet2_data:
             net_placements = sheet2_data['placement_metrics'].get('Net Placements', [0] * 8)
             if net_placements:
                 kpis['Net Placements (Latest Month)'] = f"{net_placements[7]:.0f}"  # August
+        
+        # Total Placements (sum of all months)
+        if sheet2_data and 'placement_metrics' in sheet2_data:
+            new_placements = sheet2_data['placement_metrics'].get('New Placements', [0] * 8)
+            if new_placements:
+                total_placements = sum(new_placements)
+                kpis['Total Placements'] = f"{total_placements:.0f}"
+        
+        # Total Terminations (sum of all months)
+        if sheet2_data and 'placement_metrics' in sheet2_data:
+            terminations = sheet2_data['placement_metrics'].get('Terminations', [0] * 8)
+            if terminations:
+                total_terminations = sum(terminations)
+                kpis['Total Terminations'] = f"{total_terminations:.0f}"
         
         # Gross Margin Total
         if sheet3_data and 'margin_data' in sheet3_data:
@@ -2352,7 +2492,11 @@ def process_placement_report_route():
             if placement_chart:
                 charts['placement_metrics'] = placement_chart
         
-        # Gross margin chart removed per user request
+        # Gross margin chart from Sheet 3
+        if sheet3_data:
+            margin_chart = create_gross_margin_chart_from_sheets(sheet3_data)
+            if margin_chart:
+                charts['gross_margin'] = margin_chart
         
         # Additional charts
         if sheet2_data:
@@ -2531,6 +2675,11 @@ def process_finance_report():
             print(f"Excel read error: {error_msg}")
             return jsonify({'success': False, 'error': error_msg})
         
+        print("=== EXTRACTING SPECIFIC FINANCIAL VALUES ===")
+        # Extract the 9 specific financial values
+        specific_values = extract_specific_financial_values(excel_data)
+        print(f"Specific values extracted: {specific_values}")
+        
         print("=== PROCESSING FINANCE DATA ===")
         # Process all finance data
         processed_data = process_finance_data(excel_data)
@@ -2555,7 +2704,8 @@ def process_finance_report():
             'charts': charts,
             'filename': filename,
             'sheet_names': excel_data.get('sheet_names', []),
-            'processed_data': processed_data
+            'processed_data': processed_data,
+            'specific_values': specific_values
         }
         print("Session data stored successfully")
         
@@ -2565,7 +2715,8 @@ def process_finance_report():
             'kpis': kpis,
             'charts': charts,
             'sheet_count': len(excel_data.get('sheet_names', [])),
-            'processed_data': processed_data
+            'processed_data': processed_data,
+            'specific_values': specific_values
         })
             
     except Exception as e:
@@ -3646,6 +3797,7 @@ def export_recruitment_report():
     )
 
 if __name__ == '__main__':
-    init_recruitment_database()
-    load_recruitment_csv_data()
+    # DISABLED: Don't auto-load recruitment data on startup
+    # init_recruitment_database()
+    # load_recruitment_csv_data()
     app.run(debug=True, host='0.0.0.0', port=5004)

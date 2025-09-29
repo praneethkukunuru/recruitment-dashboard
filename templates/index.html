@@ -47,6 +47,35 @@
                 <span class="nav-icon">🔍</span>
                 <span>Data Explorer</span>
             </div>
+            
+            <!-- Upload Sections -->
+            <div class="nav-section-divider"></div>
+            
+            <div class="nav-section-title">Upload Data</div>
+            
+            <!-- Upload Finance Data -->
+            <div class="nav-upload-section">
+                <div class="nav-upload-title">💰 Finance Data</div>
+                <div class="file-upload-nav" id="nav-finance-upload">
+                    <div class="upload-area-nav">
+                        <div class="upload-text-nav">Drop finance Excel file here</div>
+                        <button class="browse-btn-nav">Choose File</button>
+                    </div>
+                    <input type="file" accept=".xlsx,.xls" style="display: none;" data-type="finance">
+                </div>
+            </div>
+            
+            <!-- Upload Recruitment Data -->
+            <div class="nav-upload-section">
+                <div class="nav-upload-title">📊 Recruitment Data</div>
+                <div class="file-upload-nav" id="nav-rec-upload">
+                    <div class="upload-area-nav">
+                        <div class="upload-text-nav">Drop recruitment Excel file here</div>
+                        <button class="browse-btn-nav">Choose File</button>
+                    </div>
+                    <input type="file" accept=".xlsx,.xls" style="display: none;" data-type="rec">
+                </div>
+            </div>
         </div>
     </div>
 
@@ -59,34 +88,6 @@
             </div>
             
             <div class="sidebar-content">
-                <!-- Upload New Data Section -->
-                <div class="sidebar-section">
-                    <h4>Upload New Report</h4>
-                    <div class="file-upload-sidebar" id="sidebar-rec-upload">
-                        <div class="upload-area-sidebar">
-                            <div class="upload-icon">📊</div>
-                            <div class="upload-text">Drop new Excel file here</div>
-                            <div class="upload-limit">Excel files (.xlsx, .xls)</div>
-                            <button class="browse-btn-small">Choose File</button>
-                        </div>
-                        <input type="file" accept=".xlsx,.xls" style="display: none;" data-type="rec">
-                    </div>
-                </div>
-                
-                <!-- Upload Finance Data Section -->
-                <div class="sidebar-section">
-                    <h4>Upload Finance Data</h4>
-                    <div class="file-upload-sidebar" id="sidebar-finance-upload">
-                        <div class="upload-area-sidebar">
-                            <div class="upload-icon">💰</div>
-                            <div class="upload-text">Drop finance Excel file here</div>
-                            <div class="upload-limit">Excel files (.xlsx, .xls)</div>
-                            <button class="browse-btn-small">Choose File</button>
-                        </div>
-                        <input type="file" accept=".xlsx,.xls" style="display: none;" data-type="finance">
-                    </div>
-                </div>
-                
                 <!-- Add Monthly Data Section -->
                 <div class="sidebar-section">
                     <h4>Add Monthly Data</h4>
@@ -188,29 +189,55 @@
                     </button>
                 </div>
                 <div class="kpi-grid">
-                    <div class="kpi-card" data-kpi="total_revenue">
-                        <div class="kpi-label">Total Revenue (YTD)</div>
-                        <div class="kpi-value" id="kpi-total-revenue">—</div>
+                    <!-- Direct Hire Section -->
+                    <div class="business-unit-section">
+                        <h3 class="business-unit-title">Direct Hire</h3>
+                        <div class="kpi-card" data-kpi="direct_hire_total_revenue">
+                            <div class="kpi-label">Total Revenue</div>
+                            <div class="kpi-value" id="kpi-direct-hire-total-revenue">—</div>
+                        </div>
+                        <div class="kpi-card" data-kpi="direct_hire_gross_income">
+                            <div class="kpi-label">Gross Income</div>
+                            <div class="kpi-value" id="kpi-direct-hire-gross-income">—</div>
+                        </div>
+                        <div class="kpi-card" data-kpi="direct_hire_net_income">
+                            <div class="kpi-label">Net Income</div>
+                            <div class="kpi-value" id="kpi-direct-hire-net-income">—</div>
+                        </div>
                     </div>
-                    <div class="kpi-card" data-kpi="total_expenses">
-                        <div class="kpi-label">Total Expenses (YTD)</div>
-                        <div class="kpi-value" id="kpi-total-expenses">—</div>
+                    
+                    <!-- IT Services Section -->
+                    <div class="business-unit-section">
+                        <h3 class="business-unit-title">IT Services</h3>
+                        <div class="kpi-card" data-kpi="it_services_total_revenue">
+                            <div class="kpi-label">Total Revenue</div>
+                            <div class="kpi-value" id="kpi-it-services-total-revenue">—</div>
+                        </div>
+                        <div class="kpi-card" data-kpi="it_services_gross_income">
+                            <div class="kpi-label">Gross Income</div>
+                            <div class="kpi-value" id="kpi-it-services-gross-income">—</div>
+                        </div>
+                        <div class="kpi-card" data-kpi="it_services_net_income">
+                            <div class="kpi-label">Net Income</div>
+                            <div class="kpi-value" id="kpi-it-services-net-income">—</div>
+                        </div>
                     </div>
-                    <div class="kpi-card" data-kpi="total_net_income">
-                        <div class="kpi-label">Net Income (YTD)</div>
-                        <div class="kpi-value" id="kpi-net-income">—</div>
-                    </div>
-                    <div class="kpi-card" data-kpi="profit_margin">
-                        <div class="kpi-label">Profit Margin</div>
-                        <div class="kpi-value" id="kpi-profit-margin">—</div>
-                    </div>
-                    <div class="kpi-card" data-kpi="avg_monthly_revenue">
-                        <div class="kpi-label">Avg Monthly Revenue</div>
-                        <div class="kpi-value" id="kpi-avg-monthly-revenue">—</div>
-                    </div>
-                    <div class="kpi-card" data-kpi="avg_monthly_net_income">
-                        <div class="kpi-label">Avg Monthly Net Income</div>
-                        <div class="kpi-value" id="kpi-avg-monthly-net-income">—</div>
+                    
+                    <!-- IT Staffing Section -->
+                    <div class="business-unit-section">
+                        <h3 class="business-unit-title">IT Staffing</h3>
+                        <div class="kpi-card" data-kpi="it_staffing_total_revenue">
+                            <div class="kpi-label">Total Revenue</div>
+                            <div class="kpi-value" id="kpi-it-staffing-total-revenue">—</div>
+                        </div>
+                        <div class="kpi-card" data-kpi="it_staffing_gross_income">
+                            <div class="kpi-label">Gross Income</div>
+                            <div class="kpi-value" id="kpi-it-staffing-gross-income">—</div>
+                        </div>
+                        <div class="kpi-card" data-kpi="it_staffing_net_income">
+                            <div class="kpi-label">Net Income</div>
+                            <div class="kpi-value" id="kpi-it-staffing-net-income">—</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -342,43 +369,51 @@
                     </button>
                 </div>
                 <div class="kpi-grid">
-                    <div class="kpi-card">
-                        <div class="kpi-label">Total Current Billables</div>
-                        <div class="kpi-value" id="kpi-total-billables">—</div>
+                    <div class="kpi-card" data-kpi="total_placements">
+                        <div class="kpi-label">Total Placements</div>
+                        <div class="kpi-value" id="kpi-total-placements">—</div>
                     </div>
-                    <div class="kpi-card">
-                        <div class="kpi-label">W2 Placements</div>
-                        <div class="kpi-value" id="kpi-w2-count">—</div>
+                    <div class="kpi-card" data-kpi="total_terminations">
+                        <div class="kpi-label">Total Terminations</div>
+                        <div class="kpi-value" id="kpi-total-terminations">—</div>
                     </div>
-                    <div class="kpi-card">
-                        <div class="kpi-label">Net Placements (Latest Month)</div>
+                    <div class="kpi-card" data-kpi="net_placements">
+                        <div class="kpi-label">Net Placements</div>
                         <div class="kpi-value" id="kpi-net-placements">—</div>
                     </div>
-                    <div class="kpi-card">
-                        <div class="kpi-label">Gross Margin Total</div>
-                        <div class="kpi-value" id="kpi-gross-margin">—</div>
+                    <div class="kpi-card" data-kpi="total_billables">
+                        <div class="kpi-label">Total Billables</div>
+                        <div class="kpi-value" id="kpi-total-billables">—</div>
+                    </div>
+                    <div class="kpi-card" data-kpi="w2_placements">
+                        <div class="kpi-label">W2 Placements</div>
+                        <div class="kpi-value" id="kpi-w2-placements">—</div>
+                    </div>
+                    <div class="kpi-card" data-kpi="c2c_placements">
+                        <div class="kpi-label">C2C Placements</div>
+                        <div class="kpi-value" id="kpi-c2c-placements">—</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Recruitment Visuals Section -->
+            <!-- Visuals Section -->
             <div class="section">
-                <div class="section-title">Placement Report Analytics</div>
+                <div class="section-title">Recruitment Analytics</div>
                 <div id="recruitment-charts-container">
                     <div class="chart-row">
                         <div class="chart-container">
-                            <h4>Employment Types Trend (W2, C2C, 1099, Referral)</h4>
+                            <h4>Employment Types by Month</h4>
                             <div id="chart-employment-types"></div>
                         </div>
                         <div class="chart-container">
-                            <h4>Placement Metrics (New, Terminations, Net)</h4>
+                            <h4>Placement Metrics</h4>
                             <div id="chart-placement-metrics"></div>
                         </div>
                     </div>
                     <div class="chart-row">
                         <div class="chart-container">
-                            <h4>Monthly Billables Trend</h4>
-                            <div id="chart-billables-trend"></div>
+                            <h4>Gross Margin Analysis</h4>
+                            <div id="chart-gross-margin"></div>
                         </div>
                     </div>
                 </div>
