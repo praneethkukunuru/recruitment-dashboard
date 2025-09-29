@@ -43,9 +43,9 @@
                 <span class="nav-icon">👥</span>
                 <span>Recruitment Dashboard</span>
             </div>
-            <div class="nav-item" onclick="showReports()">
-                <span class="nav-icon">📈</span>
-                <span>Reports</span>
+            <div class="nav-item" onclick="switchDashboard('data-explorer')">
+                <span class="nav-icon">🔍</span>
+                <span>Data Explorer</span>
             </div>
         </div>
     </div>
@@ -159,6 +159,25 @@
         <div class="main-content">
             <!-- Finance Dashboard -->
             <div class="dashboard-view" id="finance-dashboard">
+            <!-- Full Screen Upload Zone (Initial State) -->
+            <div class="fullscreen-upload-zone" id="finance-upload-section">
+                <div class="upload-container">
+                    <div class="upload-content">
+                        <div class="upload-icon-large">💰</div>
+                        <h2>Finance Dashboard</h2>
+                        <p>Upload your Monthly Income & Expenses Excel file to get started</p>
+                        <div class="file-upload" id="finance-upload">
+                            <div class="upload-area">
+                                <div class="upload-icon">💰</div>
+                                <div class="upload-text">Drop your Monthly Income & Expenses Excel file here</div>
+                                <div class="upload-limit">Excel files (.xlsx, .xls) • Max 200MB</div>
+                                <button class="browse-btn">Choose File</button>
+                            </div>
+                            <input type="file" accept=".xlsx,.xls" style="display: none;" data-type="finance">
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Finance KPIs Section -->
             <div class="section">
@@ -169,29 +188,87 @@
                     </button>
                 </div>
                 <div class="kpi-grid">
-                    <div class="kpi-card">
+                    <div class="kpi-card" data-kpi="total_revenue">
                         <div class="kpi-label">Total Revenue (YTD)</div>
                         <div class="kpi-value" id="kpi-total-revenue">—</div>
                     </div>
-                    <div class="kpi-card">
+                    <div class="kpi-card" data-kpi="total_expenses">
                         <div class="kpi-label">Total Expenses (YTD)</div>
                         <div class="kpi-value" id="kpi-total-expenses">—</div>
                     </div>
-                    <div class="kpi-card">
+                    <div class="kpi-card" data-kpi="total_net_income">
                         <div class="kpi-label">Net Income (YTD)</div>
                         <div class="kpi-value" id="kpi-net-income">—</div>
                     </div>
-                    <div class="kpi-card">
+                    <div class="kpi-card" data-kpi="profit_margin">
                         <div class="kpi-label">Profit Margin</div>
                         <div class="kpi-value" id="kpi-profit-margin">—</div>
                     </div>
-                    <div class="kpi-card">
+                    <div class="kpi-card" data-kpi="avg_monthly_revenue">
                         <div class="kpi-label">Avg Monthly Revenue</div>
                         <div class="kpi-value" id="kpi-avg-monthly-revenue">—</div>
                     </div>
-                    <div class="kpi-card">
+                    <div class="kpi-card" data-kpi="avg_monthly_net_income">
                         <div class="kpi-label">Avg Monthly Net Income</div>
                         <div class="kpi-value" id="kpi-avg-monthly-net-income">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Formula Editor Modal (Hidden by default) -->
+            <div id="formula-editor-modal" class="formula-modal" style="display: none;">
+                <div class="formula-modal-content">
+                    <div class="formula-modal-header">
+                        <h3 id="formula-editor-title">Edit Formula</h3>
+                        <button class="close-btn" onclick="closeFormulaEditor()">&times;</button>
+                    </div>
+                    
+                    <div class="formula-editor-body">
+                        <!-- Available Variables -->
+                        <div class="variables-section">
+                            <h4>Available Variables</h4>
+                            <div class="variables-grid" id="variables-grid">
+                                <!-- Variables will be populated dynamically -->
+                            </div>
+                        </div>
+                        
+                        <!-- Formula Builder -->
+                        <div class="formula-builder-section">
+                            <h4>Formula Builder</h4>
+                            
+                            <!-- Operator Buttons -->
+                            <div class="operator-buttons">
+                                <button class="operator-btn" onclick="addOperator('+')">+</button>
+                                <button class="operator-btn" onclick="addOperator('-')">-</button>
+                                <button class="operator-btn" onclick="addOperator('*')">×</button>
+                                <button class="operator-btn" onclick="addOperator('/')">÷</button>
+                                <button class="operator-btn" onclick="addOperator('(')">(</button>
+                                <button class="operator-btn" onclick="addOperator(')')">)</button>
+                                <button class="operator-btn delete-btn" onclick="deleteLastItem()">⌫</button>
+                                <button class="operator-btn clear-btn" onclick="clearFormula()">Clear</button>
+                            </div>
+                            
+                            <div class="formula-canvas" id="formula-canvas">
+                                <div class="formula-placeholder">Drag variables here to build your formula</div>
+                            </div>
+                            
+                            <!-- Formula Preview -->
+                            <div class="formula-preview-section">
+                                <label>Formula Preview:</label>
+                                <div class="formula-preview" id="formula-preview">= </div>
+                            </div>
+                            
+                            <!-- Formula Result -->
+                            <div class="formula-result-section">
+                                <label>Result:</label>
+                                <div class="formula-result" id="formula-result">$0</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="formula-modal-footer">
+                        <button class="btn btn-secondary" onclick="resetFormula()">Reset to Default</button>
+                        <button class="btn btn-primary" onclick="saveFormula()">Save Formula</button>
                     </div>
                 </div>
             </div>
@@ -199,43 +276,26 @@
             <!-- Visuals Section -->
             <div class="section">
                 <div class="section-title">Financial Analytics</div>
-                <div id="charts-container">
+                <div id="finance-charts-container">
                     <div class="chart-row">
                         <div class="chart-container">
-                            <h4>Business Units Revenue Comparison</h4>
-                            <div id="chart-business-units-revenue"></div>
+                            <h4>Direct Hire Revenue, Direct Hire Gross Income, Direct Hire Net Income</h4>
+                            <div id="chart-direct-hire-finance"></div>
                         </div>
                         <div class="chart-container">
-                            <h4>Monthly P&L Trend</h4>
-                            <div id="chart-monthly-pnl-trend"></div>
+                            <h4>Services Revenue, Services Gross Income, Services Net Income</h4>
+                            <div id="chart-services-finance"></div>
                         </div>
                     </div>
                     <div class="chart-row">
                         <div class="chart-container">
-                            <h4>Financial Summary Metrics</h4>
-                            <div id="chart-summary-metrics"></div>
-                        </div>
-                        <div class="chart-container">
-                            <h4>Revenue, Expenses & Gross Income Trend</h4>
-                            <div id="chart-finance-revenue"></div>
+                            <h4>IT Staffing Revenue, IT Staffing Gross Income, IT Staffing Net Income</h4>
+                            <div id="chart-it-staffing-finance"></div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Export Section -->
-            <div class="section">
-                <div class="section-title">Export & Reports</div>
-                <div class="export-section">
-                    <button class="export-btn" id="download-report">
-                        <span class="export-icon">⬇️</span>
-                        Download Financial Report
-                    </button>
-                    <div class="export-tip">
-                        Generate a comprehensive HTML report with all charts and KPIs.
-                    </div>
-                </div>
-            </div>
         </div>
 
         <!-- Recruitment Dashboard -->
@@ -320,24 +380,164 @@
                             <h4>Monthly Billables Trend</h4>
                             <div id="chart-billables-trend"></div>
                         </div>
-                        <div class="chart-container">
-                            <h4>Direct Hire Revenue, Direct Hire Gross Income, Direct Hire Net Income</h4>
-                            <div id="chart-direct-hire"></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Data Explorer Dashboard -->
+        <div class="dashboard-view" id="data-explorer-dashboard">
+            <!-- Data Explorer Header -->
+            <div class="section">
+                <div class="section-title">Data Explorer</div>
+                <div class="data-explorer-info">
+                    <p>View and explore the raw data from your uploaded files. This provides complete transparency into the data used for calculations.</p>
+                </div>
+            </div>
+
+            <!-- Data Source Selection -->
+            <div class="section">
+                <div class="section-title">Data Sources</div>
+                <div class="data-source-tabs">
+                    <button class="data-tab-btn active" onclick="switchDataSource('recruitment')" id="tab-recruitment">
+                        <span class="tab-icon">👥</span>
+                        <span class="tab-text">Recruitment Data</span>
+                        <span class="tab-status" id="status-recruitment">No Data</span>
+                    </button>
+                    <button class="data-tab-btn" onclick="switchDataSource('finance')" id="tab-finance">
+                        <span class="tab-icon">💰</span>
+                        <span class="tab-text">Finance Data</span>
+                        <span class="tab-status" id="status-finance">No Data</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Recruitment Data Explorer -->
+            <div class="data-source-content" id="content-recruitment">
+                <div class="section">
+                    <div class="section-title">Recruitment Data Tables</div>
+                    <div class="data-table-controls">
+                        <div class="search-controls">
+                            <input type="text" id="recruitment-search" placeholder="Search in recruitment data..." class="search-input">
+                            <button class="btn btn-secondary" onclick="clearRecruitmentSearch()">Clear</button>
+                        </div>
+                        <div class="export-controls">
+                            <button class="btn btn-primary" onclick="exportRecruitmentData()">
+                                <span class="btn-icon">📥</span>
+                                Export Data
+                            </button>
                         </div>
                     </div>
-                    <div class="chart-row">
-                        <div class="chart-container">
-                            <h4>Services Revenue, Services Gross Income, Services Net Income</h4>
-                            <div id="chart-services"></div>
+                    
+                    <div class="data-tables">
+                        <div class="data-table-section">
+                            <h4>Employment Types Data</h4>
+                            <div class="table-container">
+                                <table class="data-table" id="recruitment-employment-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Month</th>
+                                            <th>TG W2</th>
+                                            <th>TG C2C</th>
+                                            <th>TG 1099</th>
+                                            <th>TG Referral</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Data will be populated by JavaScript -->
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
-                        <div class="chart-container">
-                            <h4>IT Staffing Revenue, IT Staffing Gross Income, IT Staffing Net Income</h4>
-                            <div id="chart-it-staffing"></div>
+
+                        <div class="data-table-section">
+                            <h4>Placement Metrics Data</h4>
+                            <div class="table-container">
+                                <table class="data-table" id="recruitment-placements-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Month</th>
+                                            <th>New Placements</th>
+                                            <th>Terminations</th>
+                                            <th>Net Placements</th>
+                                            <th>Total Billables</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Data will be populated by JavaScript -->
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
+            <!-- Finance Data Explorer -->
+            <div class="data-source-content" id="content-finance" style="display: none;">
+                <div class="section">
+                    <div class="section-title">Finance Data Tables</div>
+                    <div class="data-table-controls">
+                        <div class="search-controls">
+                            <input type="text" id="finance-search" placeholder="Search in finance data..." class="search-input">
+                            <button class="btn btn-secondary" onclick="clearFinanceSearch()">Clear</button>
+                        </div>
+                        <div class="export-controls">
+                            <button class="btn btn-primary" onclick="exportFinanceData()">
+                                <span class="btn-icon">📥</span>
+                                Export Data
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="data-tables">
+                        <div class="data-table-section">
+                            <h4>Business Units Summary</h4>
+                            <div class="table-container">
+                                <table class="data-table" id="finance-summary-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Business Unit</th>
+                                            <th>Jan</th>
+                                            <th>Feb</th>
+                                            <th>Mar</th>
+                                            <th>Apr</th>
+                                            <th>May</th>
+                                            <th>Jun</th>
+                                            <th>Jul</th>
+                                            <th>Aug</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Data will be populated by JavaScript -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="data-table-section">
+                            <h4>Monthly P&L Data</h4>
+                            <div class="table-container">
+                                <table class="data-table" id="finance-pnl-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Company</th>
+                                            <th>Month</th>
+                                            <th>Total Income</th>
+                                            <th>Total Expenses</th>
+                                            <th>Net Income</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Data will be populated by JavaScript -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -379,7 +579,8 @@
             navItems.forEach(item => {
                 const text = item.textContent.toLowerCase();
                 if ((dashboardType === 'finance' && text.includes('finance')) ||
-                    (dashboardType === 'recruitment' && text.includes('recruitment'))) {
+                    (dashboardType === 'recruitment' && text.includes('recruitment')) ||
+                    (dashboardType === 'data-explorer' && text.includes('data explorer'))) {
                     item.classList.add('active');
                 }
             });
@@ -387,11 +588,13 @@
             // Update title
             const titles = {
                 'finance': 'Finance Dashboard',
-                'recruitment': 'Recruitment Dashboard'
+                'recruitment': 'Recruitment Dashboard',
+                'data-explorer': 'Data Explorer'
             };
             document.getElementById('dashboard-title').textContent = titles[dashboardType];
             
             currentDashboard = dashboardType;
+            window.currentDashboard = dashboardType;
             
             // Show/hide data sidebar based on dashboard type
             const dataSidebar = document.getElementById('data-sidebar');
@@ -411,10 +614,38 @@
                     mainContent.classList.remove('finance-mode', 'recruitment-mode');
                 }
             } else if (dashboardType === 'finance') {
-                // Always hide sidebar for finance dashboard
+                // Check if finance dashboard has data
+                const hasData = $('#finance-upload-section').is(':hidden') && $('.section').is(':visible');
+                if (hasData) {
+                    // Hide sidebar for finance dashboard with data
+                    dataSidebar.style.display = 'none';
+                    mainContent.classList.remove('recruitment-mode');
+                    mainContent.classList.add('finance-mode');
+                } else {
+                    // Hide sidebar when no data (full screen upload mode)
+                    dataSidebar.style.display = 'none';
+                    mainContent.classList.remove('finance-mode', 'recruitment-mode');
+                }
+            } else if (dashboardType === 'data-explorer') {
+                // Hide sidebar for data explorer
                 dataSidebar.style.display = 'none';
-                mainContent.classList.remove('recruitment-mode');
-                mainContent.classList.add('finance-mode');
+                mainContent.classList.remove('finance-mode', 'recruitment-mode');
+                
+                // Load data explorer data when switching to it
+                if (typeof loadDataExplorerData === 'function') {
+                    loadDataExplorerData();
+                }
+            }
+            
+            // Restore UI for dashboard with existing data
+            if (dashboardType === 'recruitment' && window.recruitmentData) {
+                // Hide upload screen and show dashboard sections
+                $('#initial-upload-section').hide();
+                $('.section').show();
+            } else if (dashboardType === 'finance' && window.financeData) {
+                // Hide upload screen and show dashboard sections
+                $('#finance-upload-section').hide();
+                $('.section').show();
             }
             
             // Close navigation sidebar after switching
@@ -455,6 +686,7 @@
             const dataSidebar = document.getElementById('data-sidebar');
             
             currentDashboard = 'finance';
+            window.currentDashboard = 'finance';
             dataSidebar.style.display = 'none';
             mainContent.classList.add('finance-mode');
         });

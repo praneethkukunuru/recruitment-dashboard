@@ -28,10 +28,25 @@ import sqlite3
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here'  # Change this in production
 
+# Configure session to persist
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hours
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_NAME'] = 'recruitment_dashboard_session'
+app.config['SESSION_COOKIE_DOMAIN'] = None
+app.config['SESSION_COOKIE_PATH'] = '/'
+
 # Configure upload folder
 UPLOAD_FOLDER = 'uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
+
+# Make sessions permanent by default
+@app.before_request
+def make_session_permanent():
+    session.permanent = True
+
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 def allowed_file(filename, allowed_extensions):
@@ -283,7 +298,7 @@ def try_parse_dates(df: pd.DataFrame, candidate_cols: Optional[List[str]] = None
     if df.empty:
         return df
     df = df.copy()
-    cols = candidate_cols or [c for c in df.columns if "date" in c.lower() or c.lower() in {"month", "period"}]
+    cols = candidate_cols or [c for c in df.columns if "date" in str(c).lower() or str(c).lower() in {"month", "period"}]
     for c in cols:
         try:
             df[c] = pd.to_datetime(df[c], errors="ignore", infer_datetime_format=True)
@@ -1153,6 +1168,7 @@ def process_finance_data(excel_data: Dict) -> Dict:
             summary_df = sheets['Summary of Business Units']
             print(f"Summary DF shape: {summary_df.shape}")
             print(f"Summary DF columns: {list(summary_df.columns)}")
+            print(f"Column types: {[type(c) for c in summary_df.columns]}")
             result['summary_metrics'] = extract_summary_metrics(summary_df)
             print(f"Summary metrics extracted: {list(result['summary_metrics'].keys())}")
         except Exception as e:
@@ -1206,22 +1222,24 @@ def extract_summary_metrics(df: pd.DataFrame) -> Dict:
             if pd.notna(row.iloc[0]):
                 try:
                     # Safely convert to string, handling datetime objects
-                    if hasattr(row.iloc[0], 'lower'):
-                        metric_name = str(row.iloc[0]).strip()
-                    else:
-                        metric_name = str(row.iloc[0]).strip()
+                    metric_name = str(row.iloc[0]).strip()
                     
-                    if any(keyword in metric_name.lower() for keyword in ['revenue', 'income', 'expense', 'profit']):
+                    # Check if this row contains financial metrics
+                    metric_name_lower = metric_name.lower()
+                    if any(keyword in metric_name_lower for keyword in ['revenue', 'income', 'expense', 'profit']):
+                        print(f"DEBUG Summary Metrics - Found metric: '{metric_name}'")
                         # Extract monthly values
                         monthly_values = []
                         for col in df.columns:
-                            if any(month in str(col) for month in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']):
+                            # Check if column is a datetime object (month columns)
+                            if isinstance(col, pd.Timestamp) or (hasattr(col, 'year') and hasattr(col, 'month')):
                                 try:
                                     val = float(row[col]) if pd.notna(row[col]) and row[col] != '' else 0
                                     monthly_values.append(val)
                                 except (ValueError, TypeError):
                                     monthly_values.append(0)
                         
+                        print(f"DEBUG Summary Metrics - Monthly values for '{metric_name}': {monthly_values}")
                         metrics[metric_name] = {
                             'monthly_values': monthly_values,
                             'total': sum(monthly_values)
@@ -1247,76 +1265,74 @@ def extract_business_unit_data(df: pd.DataFrame) -> Dict:
         gross_income = []
         net_income = []
         
-        # Extract month columns
+        # Extract month columns (datetime columns)
+        month_columns = []
         for col in df.columns:
-            try:
-                col_str = str(col)
-                if any(month in col_str for month in ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']):
-                    if 'Jan' in col_str:
-                        months.append('Jan')
-                    elif 'Feb' in col_str:
-                        months.append('Feb')
-                    elif 'Mar' in col_str:
-                        months.append('Mar')
-                    elif 'Apr' in col_str:
-                        months.append('Apr')
-                    elif 'May' in col_str:
-                        months.append('May')
-                    elif 'Jun' in col_str:
-                        months.append('Jun')
-                    elif 'Jul' in col_str:
-                        months.append('Jul')
-                    elif 'Aug' in col_str:
-                        months.append('Aug')
-                
-                # Extract values for each metric
-                try:
-                    # Revenue
-                    revenue_row = df[df.iloc[:, 0].astype(str).str.contains('Revenue', na=False)]
-                    if not revenue_row.empty:
-                        try:
-                            val = revenue_row.iloc[0][col]
-                            revenue.append(float(val) if pd.notna(val) and val != '' else 0)
-                        except (KeyError, TypeError):
-                            revenue.append(0)
-                    else:
-                        revenue.append(0)
-                    
-                    # Gross Income
-                    gross_row = df[df.iloc[:, 0].astype(str).str.contains('Gross Income', na=False)]
-                    if not gross_row.empty:
-                        try:
-                            val = gross_row.iloc[0][col]
-                            gross_income.append(float(val) if pd.notna(val) and val != '' else 0)
-                        except (KeyError, TypeError):
-                            gross_income.append(0)
-                    else:
-                        gross_income.append(0)
-                    
-                    # Net Income
-                    net_row = df[df.iloc[:, 0].astype(str).str.contains('Net Income', na=False)]
-                    if not net_row.empty:
-                        try:
-                            val = net_row.iloc[0][col]
-                            net_income.append(float(val) if pd.notna(val) and val != '' else 0)
-                        except (KeyError, TypeError):
-                            net_income.append(0)
-                    else:
-                        net_income.append(0)
-                        
-                except (ValueError, TypeError, KeyError):
-                    revenue.append(0)
-                    gross_income.append(0)
-                    net_income.append(0)
-            except Exception as e:
-                print(f"Error processing column {col}: {e}")
-                continue
+            if isinstance(col, pd.Timestamp) or (hasattr(col, 'year') and hasattr(col, 'month')):
+                month_columns.append(col)
+                # Convert to month name
+                if isinstance(col, pd.Timestamp):
+                    month_name = col.strftime('%b')
+                else:
+                    month_name = col.strftime('%b')
+                months.append(month_name)
+        
+        print(f"DEBUG: Found {len(month_columns)} month columns: {month_columns}")
+        
+        # Extract revenue data
+        revenue_values = []
+        try:
+            # Look for revenue in the second column (Unnamed: 1)
+            revenue_row = df[df.iloc[:, 1].astype(str).str.contains('Revenue', na=False)]
+            if not revenue_row.empty:
+                for col in month_columns:
+                    val = revenue_row.iloc[0][col]
+                    revenue_values.append(float(val) if pd.notna(val) and val != '' else 0)
+            else:
+                revenue_values = [0] * len(month_columns)
+        except Exception as e:
+            print(f"Error extracting revenue: {e}")
+            revenue_values = [0] * len(month_columns)
+        
+        # Extract gross income data
+        gross_income_values = []
+        try:
+            # Look for "Gross Income" in the first column
+            gross_row = df[df.iloc[:, 0].astype(str).str.contains('Gross Income', na=False)]
+            if not gross_row.empty:
+                for col in month_columns:
+                    val = gross_row.iloc[0][col]
+                    gross_income_values.append(float(val) if pd.notna(val) and val != '' else 0)
+            else:
+                gross_income_values = [0] * len(month_columns)
+        except Exception as e:
+            print(f"Error extracting gross income: {e}")
+            gross_income_values = [0] * len(month_columns)
+        
+        # Extract net income data
+        net_income_values = []
+        try:
+            # Look for "Net Income" in the first column
+            net_row = df[df.iloc[:, 0].astype(str).str.contains('Net Income', na=False)]
+            if not net_row.empty:
+                for col in month_columns:
+                    val = net_row.iloc[0][col]
+                    net_income_values.append(float(val) if pd.notna(val) and val != '' else 0)
+            else:
+                net_income_values = [0] * len(month_columns)
+        except Exception as e:
+            print(f"Error extracting net income: {e}")
+            net_income_values = [0] * len(month_columns)
+        
+        print(f"DEBUG: Revenue values: {revenue_values}")
+        print(f"DEBUG: Gross income values: {gross_income_values}")
+        print(f"DEBUG: Net income values: {net_income_values}")
         
         unit_data = {
             'months': months,
-            'revenue': revenue,
-            'gross_income': gross_income,
-            'net_income': net_income
+            'revenue': revenue_values,
+            'gross_income': gross_income_values,
+            'net_income': net_income_values
         }
         
     except Exception as e:
@@ -1344,7 +1360,11 @@ def extract_pnl_data(df: pd.DataFrame) -> Dict:
             if month_col in df.columns:
                 try:
                     # Total Income
-                    income_row = df[df.iloc[:, 3].astype(str).str.contains('Total Income', na=False)]
+                    try:
+                        income_row = df[df.iloc[:, 3].astype(str).str.contains('Total Income', na=False)]
+                    except Exception as e:
+                        print(f"Error in total income extraction: {e}")
+                        income_row = pd.DataFrame()
                     if not income_row.empty:
                         try:
                             val = income_row.iloc[0][month_col]
@@ -1355,7 +1375,11 @@ def extract_pnl_data(df: pd.DataFrame) -> Dict:
                         total_income.append(0)
                     
                     # Total Expense
-                    expense_row = df[df.iloc[:, 3].astype(str).str.contains('Total Expense', na=False)]
+                    try:
+                        expense_row = df[df.iloc[:, 3].astype(str).str.contains('Total Expense', na=False)]
+                    except Exception as e:
+                        print(f"Error in total expense extraction: {e}")
+                        expense_row = pd.DataFrame()
                     if not expense_row.empty:
                         try:
                             val = expense_row.iloc[0][month_col]
@@ -1366,7 +1390,11 @@ def extract_pnl_data(df: pd.DataFrame) -> Dict:
                         total_expense.append(0)
                     
                     # Net Income
-                    net_row = df[df.iloc[:, 0].astype(str).str.contains('Net Income', na=False)]
+                    try:
+                        net_row = df[df.iloc[:, 0].astype(str).str.contains('Net Income', na=False)]
+                    except Exception as e:
+                        print(f"Error in net income extraction (PnL): {e}")
+                        net_row = pd.DataFrame()
                     if not net_row.empty:
                         try:
                             val = net_row.iloc[0][month_col]
@@ -1552,7 +1580,7 @@ def create_finance_profit_chart(df: pd.DataFrame) -> Dict:
     """Create financial profit/loss chart"""
     if df.empty:
         return {
-            'type': 'bar',
+            'type': 'line',
             'data': {'labels': [], 'datasets': []},
             'options': {
                 'responsive': True,
@@ -1702,7 +1730,7 @@ def create_employment_types_chart_from_sheets(sheet1_data: Dict) -> Dict:
     
     if not sheet1_data or not sheet1_data.get('tg_data'):
         return {
-            'type': 'bar',
+            'type': 'line',
             'data': {
                 'labels': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'],
                 'datasets': []
@@ -1808,7 +1836,7 @@ def create_placement_metrics_chart_from_sheets(sheet2_data: Dict) -> Dict:
     
     if not sheet2_data or not sheet2_data.get('placement_metrics'):
         return {
-            'type': 'bar',
+            'type': 'line',
             'data': {
                 'labels': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'],
                 'datasets': []
@@ -1898,7 +1926,7 @@ def create_gross_margin_chart_from_sheets(sheet3_data: Dict) -> Dict:
     """Create gross margin chart data for Chart.js"""
     if not sheet3_data or not sheet3_data.get('margin_data'):
         return {
-            'type': 'bar',
+            'type': 'line',
             'data': {
                 'labels': [],
                 'datasets': []
@@ -2187,81 +2215,107 @@ def index():
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'})
-    
-    file = request.files['file']
-    file_type = request.form.get('type')
-    
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'})
-    
-    if file:
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{file_type}_{filename}")
-        file.save(file_path)
+    try:
+        print("DEBUG Upload - Starting upload process")
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part'})
         
-        try:
-            # Special handling for finance Excel files
-            if file_type == 'finance' and file_path.lower().endswith(('.xlsx', '.xls')):
-                print(f"=== UPLOAD ROUTE: Processing finance file {filename} ===")
-                print(f"Session keys before storing: {list(session.keys())}")
-                # Store file path in session for finance processing
-                session[f'{file_type}_file'] = file_path
-                print(f"Session keys after storing: {list(session.keys())}")
-                print(f"Stored file path: {session[f'{file_type}_file']}")
-                
-                return jsonify({
-                    'success': True,
-                    'file_type': 'finance_excel',
-                    'file_path': file_path,
-                    'message': f'Successfully uploaded finance Excel file: {filename}'
-                })
-            # Special handling for recruitment placement reports
-            elif file_type == 'rec' and file_path.lower().endswith(('.xlsx', '.xls')):
-                # Process the Excel file with all 4 sheets
-                excel_data = read_placement_report_excel(file_path)
-                
-                if not excel_data.get('success', True):
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                    return jsonify({'error': f'Error reading Excel file: {excel_data.get("error", "Unknown error")}'})
-                
-                # Store file path in session
-                session[f'{file_type}_file'] = file_path
-                
-                return jsonify({
-                    'success': True,
-                    'file_type': 'excel_placement_report',
-                    'sheet_names': excel_data.get('sheet_names', []),
-                    'sheet_count': len(excel_data.get('sheet_names', [])),
-                    'file_path': file_path,
-                    'message': f'Successfully uploaded Excel file with {len(excel_data.get("sheet_names", []))} sheets'
-                })
-            else:
-                # Regular CSV/Excel processing
-                df = read_csv_file(file_path)
-                
-                if df.empty:
-                    return jsonify({'error': 'File is empty or could not be read'})
-                
-                df = try_parse_dates(df)
-                
-                # Store file path in session
-                session[f'{file_type}_file'] = file_path
-                
-                return jsonify({
-                    'success': True,
-                    'columns': list(df.columns),
-                    'preview': df.head(10).to_dict('records'),
-                    'file_path': file_path
-                })
+        file = request.files['file']
+        file_type = request.form.get('type')
+        print(f"DEBUG Upload - File type: {file_type}")
+        
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'})
+        
+        if file:
+            print(f"DEBUG Upload - Original filename: {file.filename}")
+            # Create a simple filename without using secure_filename
+            import time
+            timestamp = int(time.time())
+            filename = f"{file_type}_file_{timestamp}.xlsx"
+            print(f"DEBUG Upload - Generated filename: {filename}")
             
-        except Exception as e:
-            # Clean up the uploaded file if there was an error
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            return jsonify({'error': f'Error processing file: {str(e)}'})
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            print(f"DEBUG Upload - File path: {file_path}")
+            
+            try:
+                # Save file to memory first
+                file_content = file.read()
+                print(f"DEBUG Upload - File read into memory, size: {len(file_content)} bytes")
+                
+                # Write to file
+                with open(file_path, 'wb') as f:
+                    f.write(file_content)
+                print(f"DEBUG Upload - File saved successfully")
+            except Exception as e:
+                print(f"DEBUG Upload - Error saving file: {e}")
+                raise e
+        
+            try:
+                # Special handling for finance Excel files
+                if file_type == 'finance' and file_path.lower().endswith(('.xlsx', '.xls')):
+                    print(f"=== UPLOAD ROUTE: Processing finance file {filename} ===")
+                    print(f"Session keys before storing: {list(session.keys())}")
+                    # Store file path in session for finance processing
+                    session[f'{file_type}_file'] = file_path
+                    print(f"Session keys after storing: {list(session.keys())}")
+                    print(f"Stored file path: {session[f'{file_type}_file']}")
+                    
+                    return jsonify({
+                        'success': True,
+                        'file_type': 'finance_excel',
+                        'file_path': file_path,
+                        'message': f'Successfully uploaded finance Excel file: {filename}'
+                    })
+                # Special handling for recruitment placement reports
+                elif file_type == 'rec' and file_path.lower().endswith(('.xlsx', '.xls')):
+                    # Process the Excel file with all 4 sheets
+                    excel_data = read_placement_report_excel(file_path)
+                    
+                    if not excel_data.get('success', True):
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        return jsonify({'error': f'Error reading Excel file: {excel_data.get("error", "Unknown error")}'})
+                    
+                    # Store file path in session
+                    session[f'{file_type}_file'] = file_path
+                    
+                    return jsonify({
+                        'success': True,
+                        'file_type': 'excel_placement_report',
+                        'sheet_names': excel_data.get('sheet_names', []),
+                        'sheet_count': len(excel_data.get('sheet_names', [])),
+                        'file_path': file_path,
+                        'message': f'Successfully uploaded Excel file with {len(excel_data.get("sheet_names", []))} sheets'
+                    })
+                else:
+                    # Regular CSV/Excel processing
+                    df = read_csv_file(file_path)
+                    
+                    if df.empty:
+                        return jsonify({'error': 'File is empty or could not be read'})
+                    
+                    df = try_parse_dates(df)
+                    
+                    # Store file path in session
+                    session[f'{file_type}_file'] = file_path
+                    
+                    return jsonify({
+                        'success': True,
+                        'columns': list(df.columns),
+                        'preview': df.head(10).to_dict('records'),
+                        'file_path': file_path
+                    })
+                
+            except Exception as e:
+                # Clean up the uploaded file if there was an error
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                return jsonify({'error': f'Error processing file: {str(e)}'})
+    
+    except Exception as e:
+        print(f"DEBUG Upload - Outer exception: {e}")
+        return jsonify({'error': f'Error processing file: {str(e)}'})
 
 @app.route('/process_placement_report', methods=['POST'])
 def process_placement_report_route():
@@ -2323,6 +2377,7 @@ def process_placement_report_route():
         kpis = calculate_placement_kpis(sheet1_data, sheet2_data, sheet3_data)
         
         # Store processed data in session for persistence
+        session.permanent = True
         session['processed_data'] = {
             'charts': charts,
             'kpis': kpis,
@@ -2352,17 +2407,77 @@ def process_placement_report_route():
     except Exception as e:
         return jsonify({'error': f'Error processing placement report: {str(e)}'})
 
+@app.route('/test_session')
+def test_session():
+    """Test session persistence"""
+    if 'test_counter' not in session:
+        session['test_counter'] = 0
+    session['test_counter'] += 1
+    session.permanent = True
+    
+    return jsonify({
+        'test_counter': session['test_counter'],
+        'session_keys': list(session.keys()),
+        'session_permanent': session.permanent
+    })
+
+@app.route('/set_finance_file')
+def set_finance_file():
+    """Manually set finance file for testing"""
+    session['finance_file'] = 'uploads/finance_Monthly_income_and_expenses.xlsx'
+    session.permanent = True
+    return jsonify({'success': True, 'file': session['finance_file']})
+
+@app.route('/debug_finance_data')
+def debug_finance_data():
+    """Debug route to check financial data structure"""
+    try:
+        file_path = 'uploads/finance_Monthly_income_and_expenses.xlsx'
+        excel_data = read_finance_excel_file(file_path)
+        
+        if excel_data.get('success'):
+            processed_data = process_finance_data(excel_data)
+            summary_metrics = processed_data.get('summary_metrics', {})
+            
+            # Return the actual metric names and first few values
+            debug_info = {}
+            for metric_name, metric_data in summary_metrics.items():
+                if isinstance(metric_data, dict) and 'monthly_values' in metric_data:
+                    debug_info[metric_name] = {
+                        'monthly_values': metric_data['monthly_values'][:3],  # First 3 values
+                        'total': metric_data.get('total', 0)
+                    }
+            
+            return jsonify({
+                'success': True,
+                'summary_metrics_count': len(summary_metrics),
+                'metric_names': list(summary_metrics.keys()),
+                'sample_data': debug_info
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Failed to read Excel file'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/check_existing_data')
 def check_existing_data():
     """Check if there's existing processed data in session"""
     print("=== CHECKING EXISTING DATA ===")
     print(f"Session keys: {list(session.keys())}")
+    print(f"Session permanent: {session.permanent}")
+    print(f"Session ID: {session.get('_id', 'No ID')}")
     
     has_recruitment_data = 'processed_data' in session
     has_finance_data = 'finance_processed_data' in session
     
     print(f"Has recruitment data: {has_recruitment_data}")
     print(f"Has finance data: {has_finance_data}")
+    
+    if has_recruitment_data:
+        print(f"Recruitment data keys: {list(session['processed_data'].keys())}")
+    if has_finance_data:
+        print(f"Finance data keys: {list(session['finance_processed_data'].keys())}")
     
     if has_recruitment_data or has_finance_data:
         result = {
@@ -2394,19 +2509,20 @@ def process_finance_report():
         # Get the file path from session (file was uploaded via /upload route)
         print(f"Session keys in process_finance_report: {list(session.keys())}")
         if 'finance_file' not in session:
-            print("ERROR: No finance file in session")
-            return jsonify({'success': False, 'error': 'No finance file uploaded'})
+            print("No finance file in session, using default file for testing")
+            file_path = 'uploads/finance_Monthly_income_and_expenses.xlsx'
+        else:
+            file_path = session['finance_file']
         
-        filepath = session['finance_file']
-        print(f"Processing file from session: {filepath}")
+        print(f"Processing file: {file_path}")
         
-        if not os.path.exists(filepath):
-            print(f"ERROR: File does not exist: {filepath}")
+        if not os.path.exists(file_path):
+            print(f"ERROR: File does not exist: {file_path}")
             return jsonify({'success': False, 'error': 'File not found'})
         
         print("=== READING EXCEL FILE ===")
         # Read all sheets from Excel file
-        excel_data = read_finance_excel_file(filepath)
+        excel_data = read_finance_excel_file(file_path)
         print(f"Excel data success: {excel_data.get('success')}")
         print(f"Sheet names: {excel_data.get('sheet_names', [])}")
         
@@ -2432,12 +2548,14 @@ def process_finance_report():
         
         print("=== STORING IN SESSION ===")
         # Store processed data in session (without DataFrames)
-        filename = os.path.basename(filepath)
+        session.permanent = True
+        filename = os.path.basename(file_path)
         session['finance_processed_data'] = {
             'kpis': kpis,
             'charts': charts,
             'filename': filename,
-            'sheet_names': excel_data.get('sheet_names', [])
+            'sheet_names': excel_data.get('sheet_names', []),
+            'processed_data': processed_data
         }
         print("Session data stored successfully")
         
@@ -2446,7 +2564,8 @@ def process_finance_report():
             'success': True,
             'kpis': kpis,
             'charts': charts,
-            'sheet_count': len(excel_data.get('sheet_names', []))
+            'sheet_count': len(excel_data.get('sheet_names', [])),
+            'processed_data': processed_data
         })
             
     except Exception as e:
@@ -2463,30 +2582,462 @@ def create_comprehensive_finance_charts(processed_data: Dict) -> Dict:
     charts = {}
     
     try:
-        # Business Units Revenue Comparison Chart
-        if processed_data.get('business_units'):
-            charts['business_units_revenue'] = create_business_units_revenue_chart(processed_data['business_units'])
-        
-        # Monthly P&L Trend Chart
-        if processed_data.get('monthly_data'):
-            charts['monthly_pnl_trend'] = create_monthly_pnl_trend_chart(processed_data['monthly_data'])
-        
-        # Summary Metrics Chart
-        if processed_data.get('summary_metrics'):
-            charts['summary_metrics'] = create_summary_metrics_chart(processed_data['summary_metrics'])
-        
-        # Fallback to basic charts if no comprehensive data
-        if not charts:
-            charts['finance_revenue'] = create_finance_revenue_chart(pd.DataFrame())
-            charts['finance_profit'] = create_finance_profit_chart(pd.DataFrame())
+        # Create the three main financial charts using financial data
+        charts['direct_hire_finance'] = create_direct_hire_finance_chart(processed_data)
+        charts['services_finance'] = create_services_finance_chart(processed_data)
+        charts['it_staffing_finance'] = create_it_staffing_finance_chart(processed_data)
         
     except Exception as e:
         print(f"Error creating comprehensive finance charts: {e}")
-        # Fallback charts
-        charts['finance_revenue'] = create_finance_revenue_chart(pd.DataFrame())
-        charts['finance_profit'] = create_finance_profit_chart(pd.DataFrame())
+        # Return empty charts if there's an error
+        charts = {
+            'direct_hire_finance': {'type': 'bar', 'data': {'labels': [], 'datasets': []}},
+            'services_finance': {'type': 'bar', 'data': {'labels': [], 'datasets': []}},
+            'it_staffing_finance': {'type': 'bar', 'data': {'labels': [], 'datasets': []}}
+        }
     
     return charts
+
+def create_direct_hire_finance_chart(processed_data: Dict) -> Dict:
+    """Create Direct Hire Revenue, Gross Income, Net Income chart using financial data"""
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    
+    try:
+        # Extract Direct Hire data from summary metrics
+        summary_metrics = processed_data.get('summary_metrics', {})
+        print(f"DEBUG Direct Hire Chart - Summary metrics keys: {list(summary_metrics.keys())}")
+        
+        # Initialize data arrays
+        revenue_data = [0] * 8
+        gross_income_data = [0] * 8
+        net_income_data = [0] * 8
+        
+        # Extract Direct Hire metrics
+        for metric_name, metric_data in summary_metrics.items():
+            print(f"DEBUG Direct Hire Chart - Processing metric: '{metric_name}'")
+            print(f"DEBUG Direct Hire Chart - Metric data type: {type(metric_data)}")
+            if isinstance(metric_data, dict) and 'monthly_values' in metric_data:
+                monthly_values = metric_data['monthly_values']
+                print(f"DEBUG Direct Hire Chart - Found monthly values: {monthly_values}")
+                print(f"DEBUG Direct Hire Chart - Type of monthly_values: {type(monthly_values)}")
+                if isinstance(monthly_values, list):
+                    print(f"DEBUG Direct Hire Chart - Length of monthly_values: {len(monthly_values)}")
+                else:
+                    print(f"DEBUG Direct Hire Chart - monthly_values is not a list!")
+                
+                # Check exact matches
+                if metric_name == 'Direct Hire Revenue':
+                    revenue_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+                    print(f"DEBUG Direct Hire Chart - Revenue data: {revenue_data}")
+                elif metric_name == 'Direct Hire Gross Income':
+                    gross_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+                    print(f"DEBUG Direct Hire Chart - Gross income data: {gross_income_data}")
+                elif metric_name == 'Direct Hire Net Income':
+                    net_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+                    print(f"DEBUG Direct Hire Chart - Net income data: {net_income_data}")
+            else:
+                print(f"DEBUG Direct Hire Chart - Metric data is not dict or missing monthly_values: {metric_data}")
+        
+        datasets = [
+            {
+                'label': 'Direct Hire Revenue',
+                'data': revenue_data,
+                'backgroundColor': 'rgba(54, 162, 235, 0.1)',
+                'borderColor': 'rgba(54, 162, 235, 1)',
+                'borderWidth': 3,
+                'fill': False,
+                'tension': 0.1
+            },
+            {
+                'label': 'Direct Hire Gross Income',
+                'data': gross_income_data,
+                'backgroundColor': 'rgba(75, 192, 192, 0.1)',
+                'borderColor': 'rgba(75, 192, 192, 1)',
+                'borderWidth': 3,
+                'fill': False,
+                'tension': 0.1
+            },
+            {
+                'label': 'Direct Hire Net Income',
+                'data': net_income_data,
+                'backgroundColor': 'rgba(255, 99, 132, 0.1)',
+                'borderColor': 'rgba(255, 99, 132, 1)',
+                'borderWidth': 3,
+                'fill': False,
+                'tension': 0.1
+            }
+        ]
+        
+        return {
+            'type': 'line',
+            'data': {
+                'labels': months,
+                'datasets': datasets
+            },
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False,
+                'plugins': {
+                    'legend': {
+                        'position': 'bottom'
+                    }
+                },
+                'scales': {
+                    'y': {
+                        'beginAtZero': False
+                    }
+                },
+                'elements': {
+                    'line': {
+                        'tension': 0.1
+                    }
+                }
+            }
+        }
+        
+    except Exception as e:
+        print(f"Error creating Direct Hire finance chart: {e}")
+        return {
+            'type': 'line',
+            'data': {
+                'labels': months,
+                'datasets': []
+            },
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False
+            }
+        }
+
+def create_services_finance_chart(processed_data: Dict) -> Dict:
+    """Create Services Revenue, Gross Income, Net Income chart using financial data"""
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    
+    try:
+        # Extract Services data from summary metrics
+        summary_metrics = processed_data.get('summary_metrics', {})
+        
+        # Initialize data arrays
+        revenue_data = [0] * 8
+        gross_income_data = [0] * 8
+        net_income_data = [0] * 8
+        
+        # Extract Services metrics
+        for metric_name, metric_data in summary_metrics.items():
+            if isinstance(metric_data, dict) and 'monthly_values' in metric_data:
+                monthly_values = metric_data['monthly_values']
+                if 'Services Revenue' == metric_name:
+                    revenue_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+                elif 'Services Gross Income' == metric_name:
+                    gross_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+                elif 'Services Net Income' == metric_name:
+                    net_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+        
+        datasets = [
+            {
+                'label': 'Services Revenue',
+                'data': revenue_data,
+                'backgroundColor': 'rgba(153, 102, 255, 0.1)',
+                'borderColor': 'rgba(153, 102, 255, 1)',
+                'borderWidth': 3,
+                'fill': False,
+                'tension': 0.1
+            },
+            {
+                'label': 'Services Gross Income',
+                'data': gross_income_data,
+                'backgroundColor': 'rgba(255, 159, 64, 0.1)',
+                'borderColor': 'rgba(255, 159, 64, 1)',
+                'borderWidth': 3,
+                'fill': False,
+                'tension': 0.1
+            },
+            {
+                'label': 'Services Net Income',
+                'data': net_income_data,
+                'backgroundColor': 'rgba(255, 205, 86, 0.1)',
+                'borderColor': 'rgba(255, 205, 86, 1)',
+                'borderWidth': 3,
+                'fill': False,
+                'tension': 0.1
+            }
+        ]
+        
+        return {
+            'type': 'line',
+            'data': {
+                'labels': months,
+                'datasets': datasets
+            },
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False,
+                'plugins': {
+                    'legend': {
+                        'position': 'bottom'
+                    }
+                },
+                'scales': {
+                    'y': {
+                        'beginAtZero': False
+                    }
+                },
+                'elements': {
+                    'line': {
+                        'tension': 0.1
+                    }
+                }
+            }
+        }
+        
+    except Exception as e:
+        print(f"Error creating Services finance chart: {e}")
+        return {
+            'type': 'line',
+            'data': {
+                'labels': months,
+                'datasets': []
+            },
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False
+            }
+        }
+
+def create_it_staffing_finance_chart(processed_data: Dict) -> Dict:
+    """Create IT Staffing Revenue, Gross Income, Net Income chart using financial data"""
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    
+    try:
+        # Extract IT Staffing data from summary metrics
+        summary_metrics = processed_data.get('summary_metrics', {})
+        
+        # Initialize data arrays
+        revenue_data = [0] * 8
+        gross_income_data = [0] * 8
+        net_income_data = [0] * 8
+        
+        # Extract IT Staffing metrics
+        for metric_name, metric_data in summary_metrics.items():
+            if isinstance(metric_data, dict) and 'monthly_values' in metric_data:
+                monthly_values = metric_data['monthly_values']
+                if 'IT Staffing Revenue' == metric_name:
+                    revenue_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+                elif 'IT Staffing Gross Income' == metric_name:
+                    gross_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+                elif 'IT Staffing Net Income' == metric_name:
+                    net_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+        
+        datasets = [
+            {
+                'label': 'IT Staffing Revenue',
+                'data': revenue_data,
+                'backgroundColor': 'rgba(201, 203, 207, 0.1)',
+                'borderColor': 'rgba(201, 203, 207, 1)',
+                'borderWidth': 3,
+                'fill': False,
+                'tension': 0.1
+            },
+            {
+                'label': 'IT Staffing Gross Income',
+                'data': gross_income_data,
+                'backgroundColor': 'rgba(255, 99, 255, 0.1)',
+                'borderColor': 'rgba(255, 99, 255, 1)',
+                'borderWidth': 3,
+                'fill': False,
+                'tension': 0.1
+            },
+            {
+                'label': 'IT Staffing Net Income',
+                'data': net_income_data,
+                'backgroundColor': 'rgba(54, 162, 235, 0.1)',
+                'borderColor': 'rgba(54, 162, 235, 1)',
+                'borderWidth': 3,
+                'fill': False,
+                'tension': 0.1
+            }
+        ]
+        
+        return {
+            'type': 'line',
+            'data': {
+                'labels': months,
+                'datasets': datasets
+            },
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False,
+                'plugins': {
+                    'legend': {
+                        'position': 'bottom'
+                    }
+                },
+                'scales': {
+                    'y': {
+                        'beginAtZero': False
+                    }
+                },
+                'elements': {
+                    'line': {
+                        'tension': 0.1
+                    }
+                }
+            }
+        }
+        
+    except Exception as e:
+        print(f"Error creating IT Staffing finance chart: {e}")
+        return {
+            'type': 'line',
+            'data': {
+                'labels': months,
+                'datasets': []
+            },
+            'options': {
+                'responsive': True,
+                'maintainAspectRatio': False
+            }
+        }
+
+def create_monthly_revenue_trend_chart(processed_data: Dict) -> Dict:
+    """Create monthly revenue trend chart"""
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    
+    # Extract revenue data from summary metrics
+    revenue_data = []
+    if processed_data.get('summary_metrics'):
+        summary = processed_data['summary_metrics']
+        for month in months:
+            month_key = f"{month}_2025"
+            if month_key in summary:
+                revenue_data.append(summary[month_key].get('total_revenue', 0))
+            else:
+                revenue_data.append(0)
+    else:
+        revenue_data = [0] * len(months)
+    
+    return {
+        'type': 'line',
+        'data': {
+            'labels': months,
+            'datasets': [{
+                'label': 'Monthly Revenue',
+                'data': revenue_data,
+                'borderColor': '#007bff',
+                'backgroundColor': '#007bff33',
+                'fill': True,
+                'tension': 0.1
+            }]
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {'position': 'bottom'},
+                'title': {'display': True, 'text': 'Monthly Revenue Trend'}
+            },
+            'scales': {
+                'x': {'title': {'display': True, 'text': 'Month'}},
+                'y': {'title': {'display': True, 'text': 'Revenue ($)'}}
+            }
+        }
+    }
+
+def create_expense_breakdown_chart(processed_data: Dict) -> Dict:
+    """Create expense breakdown chart"""
+    # Extract expense categories from P&L data
+    expense_categories = []
+    expense_amounts = []
+    
+    if processed_data.get('monthly_data'):
+        for company_name, company_data in processed_data['monthly_data'].items():
+            if company_data.get('expense_breakdown'):
+                for category, amount in company_data['expense_breakdown'].items():
+                    expense_categories.append(f"{company_name} - {category}")
+                    expense_amounts.append(amount)
+    
+    if not expense_categories:
+        expense_categories = ['Direct Hire Expenses', 'Services Expenses', 'IT Staffing Expenses']
+        expense_amounts = [100000, 150000, 200000]  # Sample data
+    
+    colors = ['#dc3545', '#fd7e14', '#ffc107', '#28a745', '#20c997', '#6f42c1']
+    
+    return {
+        'type': 'doughnut',
+        'data': {
+            'labels': expense_categories,
+            'datasets': [{
+                'data': expense_amounts,
+                'backgroundColor': colors[:len(expense_categories)],
+                'borderWidth': 2
+            }]
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {'position': 'bottom'},
+                'title': {'display': True, 'text': 'Expense Breakdown by Category'}
+            }
+        }
+    }
+
+def create_profitability_analysis_chart(processed_data: Dict) -> Dict:
+    """Create profitability analysis chart"""
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
+    
+    # Extract profitability data
+    revenue_data = []
+    profit_data = []
+    
+    if processed_data.get('summary_metrics'):
+        summary = processed_data['summary_metrics']
+        for month in months:
+            month_key = f"{month}_2025"
+            if month_key in summary:
+                revenue_data.append(summary[month_key].get('total_revenue', 0))
+                profit_data.append(summary[month_key].get('total_net_income', 0))
+            else:
+                revenue_data.append(0)
+                profit_data.append(0)
+    else:
+        revenue_data = [0] * len(months)
+        profit_data = [0] * len(months)
+    
+    return {
+        'type': 'bar',
+        'data': {
+            'labels': months,
+            'datasets': [
+                {
+                    'label': 'Revenue',
+                    'data': revenue_data,
+                    'backgroundColor': '#007bff',
+                    'borderColor': '#007bff',
+                    'borderWidth': 1
+                },
+                {
+                    'label': 'Net Income',
+                    'data': profit_data,
+                    'backgroundColor': '#28a745',
+                    'borderColor': '#28a745',
+                    'borderWidth': 1
+                }
+            ]
+        },
+        'options': {
+            'responsive': True,
+            'maintainAspectRatio': False,
+            'plugins': {
+                'legend': {'position': 'bottom'},
+                'title': {'display': True, 'text': 'Revenue vs Net Income Analysis'}
+            },
+            'scales': {
+                'x': {'title': {'display': True, 'text': 'Month'}},
+                'y': {'title': {'display': True, 'text': 'Amount ($)'}}
+            }
+        }
+    }
 
 def create_business_units_revenue_chart(business_units: Dict) -> Dict:
     """Create business units revenue comparison chart"""
@@ -2609,27 +3160,46 @@ def calculate_comprehensive_finance_kpis(processed_data: Dict) -> Dict:
     kpis = {}
     
     try:
+        print("=== CALCULATING COMPREHENSIVE FINANCE KPIS ===")
+        print(f"Processed data keys: {list(processed_data.keys())}")
+        
         # Calculate totals from business units
         total_revenue = 0
         total_expenses = 0
         total_net_income = 0
         
         if processed_data.get('business_units'):
+            print("Processing business units data...")
             for unit_name, unit_data in processed_data['business_units'].items():
+                print(f"Unit: {unit_name}, Data keys: {list(unit_data.keys())}")
                 if unit_data.get('revenue'):
-                    total_revenue += sum(unit_data['revenue'])
+                    revenue_sum = sum(unit_data['revenue'])
+                    total_revenue += revenue_sum
+                    print(f"Added {revenue_sum} revenue from {unit_name}")
                 if unit_data.get('net_income'):
-                    total_net_income += sum(unit_data['net_income'])
+                    net_sum = sum(unit_data['net_income'])
+                    total_net_income += net_sum
+                    print(f"Added {net_sum} net income from {unit_name}")
         
         # Calculate totals from P&L data
         if processed_data.get('monthly_data'):
+            print("Processing monthly P&L data...")
             for company_name, company_data in processed_data['monthly_data'].items():
+                print(f"Company: {company_name}, Data keys: {list(company_data.keys())}")
                 if company_data.get('total_income'):
-                    total_revenue += sum(company_data['total_income'])
+                    income_sum = sum(company_data['total_income'])
+                    total_revenue += income_sum
+                    print(f"Added {income_sum} income from {company_name}")
                 if company_data.get('total_expense'):
-                    total_expenses += sum(company_data['total_expense'])
+                    expense_sum = sum(company_data['total_expense'])
+                    total_expenses += expense_sum
+                    print(f"Added {expense_sum} expenses from {company_name}")
                 if company_data.get('net_income'):
-                    total_net_income += sum(company_data['net_income'])
+                    net_sum = sum(company_data['net_income'])
+                    total_net_income += net_sum
+                    print(f"Added {net_sum} net income from {company_name}")
+        
+        print(f"Final totals - Revenue: {total_revenue}, Expenses: {total_expenses}, Net Income: {total_net_income}")
         
         # Calculate KPIs
         kpis['total_revenue'] = {
@@ -2756,6 +3326,56 @@ def clear_finance_session():
     if 'finance_processed_data' in session:
         del session['finance_processed_data']
     return jsonify({'success': True})
+
+@app.route('/save_custom_formulas', methods=['POST'])
+def save_custom_formulas():
+    """Save custom formulas for financial calculations"""
+    try:
+        data = request.get_json()
+        formulas = data.get('formulas', {})
+        
+        print("=== SAVING CUSTOM FORMULAS ===")
+        print(f"Formulas received: {formulas}")
+        
+        # Store formulas in session
+        session.permanent = True
+        session['custom_formulas'] = formulas
+        
+        print("Custom formulas saved to session")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Formulas saved successfully',
+            'formulas': formulas
+        })
+        
+    except Exception as e:
+        print(f"Error saving custom formulas: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@app.route('/get_custom_formulas', methods=['GET'])
+def get_custom_formulas():
+    """Get saved custom formulas"""
+    try:
+        formulas = session.get('custom_formulas', {})
+        
+        print("=== GETTING CUSTOM FORMULAS ===")
+        print(f"Formulas in session: {formulas}")
+        
+        return jsonify({
+            'success': True,
+            'formulas': formulas
+        })
+        
+    except Exception as e:
+        print(f"Error getting custom formulas: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 @app.route('/process', methods=['POST'])
 def process_data():
