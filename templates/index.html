@@ -415,6 +415,10 @@
                             <h4>Gross Margin Analysis</h4>
                             <div id="chart-gross-margin"></div>
                         </div>
+                        <div class="chart-container">
+                            <h4>Billables Trend</h4>
+                            <div id="chart-billables-trend"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -637,7 +641,7 @@
             
             if (dashboardType === 'recruitment') {
                 // Check if recruitment dashboard has data
-                const hasData = $('#initial-upload-section').is(':hidden') && $('.section').is(':visible');
+                const hasData = window.hasRecruitmentData || ($('#initial-upload-section').is(':hidden') && $('.section').is(':visible'));
                 if (hasData) {
                     // Show sidebar for recruitment dashboard with data
                     dataSidebar.style.display = 'block';
@@ -650,7 +654,7 @@
                 }
             } else if (dashboardType === 'finance') {
                 // Check if finance dashboard has data
-                const hasData = $('#finance-upload-section').is(':hidden') && $('.section').is(':visible');
+                const hasData = window.hasFinanceData || ($('#finance-upload-section').is(':hidden') && $('.section').is(':visible'));
                 if (hasData) {
                     // Hide sidebar for finance dashboard with data
                     dataSidebar.style.display = 'none';
@@ -724,6 +728,11 @@
             window.currentDashboard = 'finance';
             dataSidebar.style.display = 'none';
             mainContent.classList.add('finance-mode');
+            
+            // Check for existing data in session
+            if (typeof checkForExistingData === 'function') {
+                checkForExistingData();
+            }
         });
       </script>
   </body>

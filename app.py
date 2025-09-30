@@ -26,7 +26,7 @@ import os
 import sqlite3
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'  # Change this in production
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here-change-in-production')
 
 # Configure session to persist
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hours
@@ -990,135 +990,7 @@ def create_recruitment_margin_chart(df: pd.DataFrame) -> go.Figure:
     
     return fig
 
-def create_direct_hire_chart() -> Dict:
-    """Create Direct Hire Revenue chart data for Chart.js"""
-    months = ['Jan-25', 'Mar-25', 'May-25', 'Jul-25']
-    
-    # Sample data based on image description
-    revenue = [22000, 0, 25000, 0]
-    gross_income = [15000, -10000, 10000, -15000]
-    net_income = [10000, -15000, 5000, -20000]
-    
-    return {
-        'type': 'line',
-        'data': {
-            'labels': months,
-            'datasets': [
-                {
-                    'label': 'Direct Hire Revenue',
-                    'data': revenue,
-                    'borderColor': '#1f77b4',
-                    'backgroundColor': '#1f77b433',
-                    'borderWidth': 3,
-                    'fill': False
-                },
-                {
-                    'label': 'Direct Hire Gross Income',
-                    'data': gross_income,
-                    'borderColor': '#ff7f0e',
-                    'backgroundColor': '#ff7f0e33',
-                    'borderWidth': 3,
-                    'fill': False
-                },
-                {
-                    'label': 'Direct Hire Net Income',
-                    'data': net_income,
-                    'borderColor': '#2ca02c',
-                    'backgroundColor': '#2ca02c33',
-                    'borderWidth': 3,
-                    'fill': False
-                }
-            ]
-        },
-        'options': {
-            'responsive': True,
-            'maintainAspectRatio': False,
-            'plugins': {
-                'legend': {
-                    'position': 'bottom'
-                }
-            },
-            'scales': {
-                'x': {
-                    'title': {
-                        'display': True,
-                        'text': 'Month'
-                    }
-                },
-                'y': {
-                    'title': {
-                        'display': True,
-                        'text': 'Amount'
-                    }
-                }
-            }
-        }
-    }
 
-def create_services_chart() -> Dict:
-    """Create Services Revenue chart data for Chart.js"""
-    months = ['Jan-25', 'Mar-25', 'May-25', 'Jul-25']
-    
-    # Sample data based on image description
-    revenue = [210000, 200000, 200000, 225000]
-    gross_income = [140000, 110000, 110000, 145000]
-    net_income = [130000, 80000, 80000, 120000]
-    
-    return {
-        'type': 'line',
-        'data': {
-            'labels': months,
-            'datasets': [
-                {
-                    'label': 'Services Revenue',
-                    'data': revenue,
-                    'borderColor': '#1f77b4',
-                    'backgroundColor': '#1f77b433',
-                    'borderWidth': 3,
-                    'fill': False
-                },
-                {
-                    'label': 'Services Gross Income',
-                    'data': gross_income,
-                    'borderColor': '#ff7f0e',
-                    'backgroundColor': '#ff7f0e33',
-                    'borderWidth': 3,
-                    'fill': False
-                },
-                {
-                    'label': 'Services Net Income',
-                    'data': net_income,
-                    'borderColor': '#2ca02c',
-                    'backgroundColor': '#2ca02c33',
-                    'borderWidth': 3,
-                    'fill': False
-                }
-            ]
-        },
-        'options': {
-            'responsive': True,
-            'maintainAspectRatio': False,
-            'plugins': {
-                'legend': {
-                    'position': 'bottom'
-                }
-            },
-            'scales': {
-                'x': {
-                    'title': {
-                        'display': True,
-                        'text': 'Month'
-                    }
-                },
-                'y': {
-                    'title': {
-                        'display': True,
-                        'text': 'Amount'
-                    }
-                }
-            }
-        }
-    }
 
 def read_finance_excel_file(file_path: str) -> Dict:
     """Read all sheets from finance Excel file"""
@@ -1207,6 +1079,26 @@ def process_finance_data(excel_data: Dict) -> Dict:
                 print(f"ERROR processing {sheet_name}: {e}")
                 import traceback
                 traceback.print_exc()
+    
+    # Process additional sheets (new categories) - but don't let them break the main processing
+    additional_sheets = ['India salaries summary', 'Night Shift Summary', 'Night Shift Salaries', 'Salary Cost', 'G&A']
+    for sheet_name in additional_sheets:
+        if sheet_name in sheets:
+            print(f"Processing additional sheet: {sheet_name}...")
+            try:
+                df = sheets[sheet_name]
+                print(f"{sheet_name} DF shape: {df.shape}")
+                # Store additional sheet data but don't process it for charts
+                result['additional_sheets'] = result.get('additional_sheets', {})
+                result['additional_sheets'][sheet_name] = {
+                    'shape': df.shape,
+                    'columns': list(df.columns),
+                    'processed': True
+                }
+                print(f"{sheet_name} additional data stored successfully")
+            except Exception as e:
+                print(f"WARNING: Could not process additional sheet {sheet_name}: {e}")
+                # Don't let additional sheets break the main processing
     
     # Process P&L sheets
     for sheet_name in ['Techgene PnL new', 'Vensiti PnL new']:
@@ -1776,76 +1668,18 @@ def create_finance_profit_chart(df: pd.DataFrame) -> Dict:
         }
     }
 
-def create_it_staffing_chart() -> Dict:
-    """Create IT Staffing Revenue chart data for Chart.js"""
-    months = ['Jan-25', 'Mar-25', 'May-25', 'Jul-25']
-    
-    # Sample data based on image description
-    revenue = [350000, 325000, 325000, 375000]
-    gross_income = [50000, -50000, -50000, 75000]
-    net_income = [0, -75000, -75000, 50000]
-    
-    return {
-        'type': 'line',
-        'data': {
-            'labels': months,
-            'datasets': [
-                {
-                    'label': 'IT Staffing Revenue',
-                    'data': revenue,
-                    'borderColor': '#1f77b4',
-                    'backgroundColor': '#1f77b433',
-                    'borderWidth': 3,
-                    'fill': False
-                },
-                {
-                    'label': 'IT Staffing Gross Income',
-                    'data': gross_income,
-                    'borderColor': '#ff7f0e',
-                    'backgroundColor': '#ff7f0e33',
-                    'borderWidth': 3,
-                    'fill': False
-                },
-                {
-                    'label': 'IT Staffing Net Income',
-                    'data': net_income,
-                    'borderColor': '#2ca02c',
-                    'backgroundColor': '#2ca02c33',
-                    'borderWidth': 3,
-                    'fill': False
-                }
-            ]
-        },
-        'options': {
-            'responsive': True,
-            'maintainAspectRatio': False,
-            'plugins': {
-                'legend': {
-                    'position': 'bottom'
-                }
-            },
-            'scales': {
-                'x': {
-                    'title': {
-                        'display': True,
-                        'text': 'Month'
-                    }
-                },
-                'y': {
-                    'title': {
-                        'display': True,
-                        'text': 'Amount'
-                    }
-                }
-            }
-        }
-    }
 
 # New chart functions for placement report processing
 
 def create_employment_types_chart_from_sheets(sheet1_data: Dict) -> Dict:
     """Create employment types chart data for Chart.js"""
     print(f"DEBUG: sheet1_data = {sheet1_data}")  # Debug print
+    print(f"DEBUG: sheet1_data type = {type(sheet1_data)}")
+    if sheet1_data:
+        print(f"DEBUG: sheet1_data keys = {list(sheet1_data.keys())}")
+        if 'tg_data' in sheet1_data:
+            print(f"DEBUG: tg_data = {sheet1_data['tg_data']}")
+            print(f"DEBUG: tg_data type = {type(sheet1_data['tg_data'])}")
     
     if not sheet1_data or not sheet1_data.get('tg_data'):
         return {
@@ -1952,6 +1786,12 @@ def create_employment_types_chart_from_sheets(sheet1_data: Dict) -> Dict:
 def create_placement_metrics_chart_from_sheets(sheet2_data: Dict) -> Dict:
     """Create placement metrics chart data for Chart.js"""
     print(f"DEBUG: sheet2_data = {sheet2_data}")  # Debug print
+    print(f"DEBUG: sheet2_data type = {type(sheet2_data)}")
+    if sheet2_data:
+        print(f"DEBUG: sheet2_data keys = {list(sheet2_data.keys())}")
+        if 'placement_metrics' in sheet2_data:
+            print(f"DEBUG: placement_metrics = {sheet2_data['placement_metrics']}")
+            print(f"DEBUG: placement_metrics type = {type(sheet2_data['placement_metrics'])}")
     
     if not sheet2_data or not sheet2_data.get('placement_metrics'):
         return {
@@ -2417,6 +2257,18 @@ def upload_file():
                             os.remove(file_path)
                         return jsonify({'error': f'Error reading Excel file: {excel_data.get("error", "Unknown error")}'})
                     
+                    # Check if this looks like a finance file being uploaded as recruitment data
+                    sheet_names = excel_data.get('sheet_names', [])
+                    finance_indicators = ['Direct Hire Net income', 'Services Net income', 'IT Staffing Net Income', 'Summary of Business Units']
+                    
+                    if any(indicator in sheet_names for indicator in finance_indicators):
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        return jsonify({
+                            'error': 'This appears to be a finance file. Please upload it as finance data instead of recruitment data.',
+                            'suggestion': 'Use the finance upload section for this file, or upload a placement report file for recruitment data.'
+                        })
+                    
                     # Store file path in session
                     session[f'{file_type}_file'] = file_path
                     
@@ -2460,10 +2312,15 @@ def upload_file():
 @app.route('/process_placement_report', methods=['POST'])
 def process_placement_report_route():
     """Process placement report Excel file and generate analytics"""
+    print("=== PROCESSING PLACEMENT REPORT ROUTE ===")
+    print(f"Session keys at start: {list(session.keys())}")
+    
     if 'rec_file' not in session:
+        print("ERROR: No rec_file in session")
         return jsonify({'error': 'No placement report file uploaded'})
     
     file_path = session['rec_file']
+    print(f"Processing file: {file_path}")
     
     try:
         # Read all sheets from the Excel file
@@ -2473,9 +2330,17 @@ def process_placement_report_route():
             return jsonify({'error': f'Error reading Excel file: {excel_data.get("error", "Unknown error")}'})
         
         # Process each sheet
+        print("=== PROCESSING SHEET DATA ===")
+        print(f"Excel data keys: {list(excel_data.keys())}")
+        
         sheet1_data = process_sheet1_employment(excel_data['sheet1_employment'])
+        print(f"Sheet1 data result: {sheet1_data}")
+        
         sheet2_data = process_sheet2_placements(excel_data['sheet2_placements'])
+        print(f"Sheet2 data result: {sheet2_data}")
+        
         sheet3_data = process_sheet3_margins(excel_data['sheet3_margins'])
+        print(f"Sheet3 data result: {sheet3_data}")
         
         # Generate charts
         charts = {}
@@ -2504,37 +2369,34 @@ def process_placement_report_route():
             if billables_chart:
                 charts['billables_trend'] = billables_chart
         
-        # Add financial charts (always include these)
-        direct_hire_chart = create_direct_hire_chart()
-        if direct_hire_chart:
-            charts['direct_hire'] = direct_hire_chart
-        
-        services_chart = create_services_chart()
-        if services_chart:
-            charts['services'] = services_chart
-        
-        it_staffing_chart = create_it_staffing_chart()
-        if it_staffing_chart:
-            charts['it_staffing'] = it_staffing_chart
-        
         # Calculate KPIs
         kpis = calculate_placement_kpis(sheet1_data, sheet2_data, sheet3_data)
         
-        # Store processed data in session for persistence
+        # Store processed data in session for persistence (minimal data only)
         session.permanent = True
+        print(f"=== STORING RECRUITMENT DATA IN SESSION ===")
+        print(f"Session keys before storing: {list(session.keys())}")
+        
+        # Store only essential data to avoid cookie size limits
         session['processed_data'] = {
             'charts': charts,
             'kpis': kpis,
-            'sheet1_data': sheet1_data,
-            'sheet2_data': sheet2_data,
-            'sheet3_data': sheet3_data,
             'processing_status': {
                 'sheet1_processed': bool(sheet1_data),
                 'sheet2_processed': bool(sheet2_data),
                 'sheet3_processed': bool(sheet3_data),
                 'sheet4_processed': not excel_data['sheet4_additional'].empty if 'sheet4_additional' in excel_data else False
-            }
+            },
+            'has_data': True  # Simple flag to indicate data exists
         }
+        print(f"Session keys after storing: {list(session.keys())}")
+        print(f"Recruitment data stored successfully")
+        
+        # Verify the data was stored
+        if 'processed_data' in session:
+            print(f"VERIFIED: processed_data exists in session with keys: {list(session['processed_data'].keys())}")
+        else:
+            print("ERROR: processed_data was NOT stored in session!")
         
         return jsonify({
             'success': True,
@@ -2611,6 +2473,7 @@ def check_existing_data():
     print(f"Session keys: {list(session.keys())}")
     print(f"Session permanent: {session.permanent}")
     print(f"Session ID: {session.get('_id', 'No ID')}")
+    print(f"Request headers: {dict(request.headers)}")
     
     has_recruitment_data = 'processed_data' in session
     has_finance_data = 'finance_processed_data' in session
@@ -2696,17 +2559,21 @@ def process_finance_report():
         print(f"KPIs calculated: {list(kpis.keys())}")
         
         print("=== STORING IN SESSION ===")
-        # Store processed data in session (without DataFrames)
+        # Store processed data in session (minimal data to avoid cookie size limits)
         session.permanent = True
+        print(f"Session keys before storing finance data: {list(session.keys())}")
         filename = os.path.basename(file_path)
+        
+        # Store only essential data to avoid cookie size limits
         session['finance_processed_data'] = {
             'kpis': kpis,
             'charts': charts,
             'filename': filename,
             'sheet_names': excel_data.get('sheet_names', []),
-            'processed_data': processed_data,
-            'specific_values': specific_values
+            'specific_values': specific_values,
+            'has_data': True  # Simple flag to indicate data exists
         }
+        print(f"Session keys after storing finance data: {list(session.keys())}")
         print("Session data stored successfully")
         
         print("=== FINANCE REPORT PROCESSING SUCCESS ===")
@@ -2754,40 +2621,33 @@ def create_direct_hire_finance_chart(processed_data: Dict) -> Dict:
     months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
     
     try:
-        # Extract Direct Hire data from summary metrics
-        summary_metrics = processed_data.get('summary_metrics', {})
-        print(f"DEBUG Direct Hire Chart - Summary metrics keys: {list(summary_metrics.keys())}")
+        # Extract Direct Hire data from business_units instead of summary_metrics
+        business_units = processed_data.get('business_units', {})
+        print(f"DEBUG Direct Hire Chart - Business units keys: {list(business_units.keys())}")
         
         # Initialize data arrays
         revenue_data = [0] * 8
         gross_income_data = [0] * 8
         net_income_data = [0] * 8
         
-        # Extract Direct Hire metrics
-        for metric_name, metric_data in summary_metrics.items():
-            print(f"DEBUG Direct Hire Chart - Processing metric: '{metric_name}'")
-            print(f"DEBUG Direct Hire Chart - Metric data type: {type(metric_data)}")
-            if isinstance(metric_data, dict) and 'monthly_values' in metric_data:
-                monthly_values = metric_data['monthly_values']
-                print(f"DEBUG Direct Hire Chart - Found monthly values: {monthly_values}")
-                print(f"DEBUG Direct Hire Chart - Type of monthly_values: {type(monthly_values)}")
-                if isinstance(monthly_values, list):
-                    print(f"DEBUG Direct Hire Chart - Length of monthly_values: {len(monthly_values)}")
-                else:
-                    print(f"DEBUG Direct Hire Chart - monthly_values is not a list!")
-                
-                # Check exact matches
-                if metric_name == 'Direct Hire Revenue':
-                    revenue_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
-                    print(f"DEBUG Direct Hire Chart - Revenue data: {revenue_data}")
-                elif metric_name == 'Direct Hire Gross Income':
-                    gross_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
-                    print(f"DEBUG Direct Hire Chart - Gross income data: {gross_income_data}")
-                elif metric_name == 'Direct Hire Net Income':
-                    net_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
-                    print(f"DEBUG Direct Hire Chart - Net income data: {net_income_data}")
-            else:
-                print(f"DEBUG Direct Hire Chart - Metric data is not dict or missing monthly_values: {metric_data}")
+        # Look for Direct Hire Net income data
+        if 'Direct Hire Net income' in business_units:
+            direct_hire_data = business_units['Direct Hire Net income']
+            print(f"DEBUG Direct Hire Chart - Found Direct Hire data: {direct_hire_data}")
+            
+            if 'revenue' in direct_hire_data:
+                revenue_data = direct_hire_data['revenue'][:8] if len(direct_hire_data['revenue']) >= 8 else direct_hire_data['revenue'] + [0] * (8 - len(direct_hire_data['revenue']))
+                print(f"DEBUG Direct Hire Chart - Revenue data: {revenue_data}")
+            
+            if 'gross_income' in direct_hire_data:
+                gross_income_data = direct_hire_data['gross_income'][:8] if len(direct_hire_data['gross_income']) >= 8 else direct_hire_data['gross_income'] + [0] * (8 - len(direct_hire_data['gross_income']))
+                print(f"DEBUG Direct Hire Chart - Gross income data: {gross_income_data}")
+            
+            if 'net_income' in direct_hire_data:
+                net_income_data = direct_hire_data['net_income'][:8] if len(direct_hire_data['net_income']) >= 8 else direct_hire_data['net_income'] + [0] * (8 - len(direct_hire_data['net_income']))
+                print(f"DEBUG Direct Hire Chart - Net income data: {net_income_data}")
+        else:
+            print("DEBUG Direct Hire Chart - No Direct Hire Net income data found")
         
         datasets = [
             {
@@ -2865,24 +2725,33 @@ def create_services_finance_chart(processed_data: Dict) -> Dict:
     months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
     
     try:
-        # Extract Services data from summary metrics
-        summary_metrics = processed_data.get('summary_metrics', {})
+        # Extract Services data from business_units instead of summary_metrics
+        business_units = processed_data.get('business_units', {})
+        print(f"DEBUG Services Chart - Business units keys: {list(business_units.keys())}")
         
         # Initialize data arrays
         revenue_data = [0] * 8
         gross_income_data = [0] * 8
         net_income_data = [0] * 8
         
-        # Extract Services metrics
-        for metric_name, metric_data in summary_metrics.items():
-            if isinstance(metric_data, dict) and 'monthly_values' in metric_data:
-                monthly_values = metric_data['monthly_values']
-                if 'Services Revenue' == metric_name:
-                    revenue_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
-                elif 'Services Gross Income' == metric_name:
-                    gross_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
-                elif 'Services Net Income' == metric_name:
-                    net_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+        # Look for Services Net income data
+        if 'Services Net income' in business_units:
+            services_data = business_units['Services Net income']
+            print(f"DEBUG Services Chart - Found Services data: {services_data}")
+            
+            if 'revenue' in services_data:
+                revenue_data = services_data['revenue'][:8] if len(services_data['revenue']) >= 8 else services_data['revenue'] + [0] * (8 - len(services_data['revenue']))
+                print(f"DEBUG Services Chart - Revenue data: {revenue_data}")
+            
+            if 'gross_income' in services_data:
+                gross_income_data = services_data['gross_income'][:8] if len(services_data['gross_income']) >= 8 else services_data['gross_income'] + [0] * (8 - len(services_data['gross_income']))
+                print(f"DEBUG Services Chart - Gross income data: {gross_income_data}")
+            
+            if 'net_income' in services_data:
+                net_income_data = services_data['net_income'][:8] if len(services_data['net_income']) >= 8 else services_data['net_income'] + [0] * (8 - len(services_data['net_income']))
+                print(f"DEBUG Services Chart - Net income data: {net_income_data}")
+        else:
+            print("DEBUG Services Chart - No Services Net income data found")
         
         datasets = [
             {
@@ -2960,24 +2829,33 @@ def create_it_staffing_finance_chart(processed_data: Dict) -> Dict:
     months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug']
     
     try:
-        # Extract IT Staffing data from summary metrics
-        summary_metrics = processed_data.get('summary_metrics', {})
+        # Extract IT Staffing data from business_units instead of summary_metrics
+        business_units = processed_data.get('business_units', {})
+        print(f"DEBUG IT Staffing Chart - Business units keys: {list(business_units.keys())}")
         
         # Initialize data arrays
         revenue_data = [0] * 8
         gross_income_data = [0] * 8
         net_income_data = [0] * 8
         
-        # Extract IT Staffing metrics
-        for metric_name, metric_data in summary_metrics.items():
-            if isinstance(metric_data, dict) and 'monthly_values' in metric_data:
-                monthly_values = metric_data['monthly_values']
-                if 'IT Staffing Revenue' == metric_name:
-                    revenue_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
-                elif 'IT Staffing Gross Income' == metric_name:
-                    gross_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
-                elif 'IT Staffing Net Income' == metric_name:
-                    net_income_data = monthly_values[:8] if len(monthly_values) >= 8 else monthly_values + [0] * (8 - len(monthly_values))
+        # Look for IT Staffing Net Income data
+        if 'IT Staffing Net Income' in business_units:
+            it_staffing_data = business_units['IT Staffing Net Income']
+            print(f"DEBUG IT Staffing Chart - Found IT Staffing data: {it_staffing_data}")
+            
+            if 'revenue' in it_staffing_data:
+                revenue_data = it_staffing_data['revenue'][:8] if len(it_staffing_data['revenue']) >= 8 else it_staffing_data['revenue'] + [0] * (8 - len(it_staffing_data['revenue']))
+                print(f"DEBUG IT Staffing Chart - Revenue data: {revenue_data}")
+            
+            if 'gross_income' in it_staffing_data:
+                gross_income_data = it_staffing_data['gross_income'][:8] if len(it_staffing_data['gross_income']) >= 8 else it_staffing_data['gross_income'] + [0] * (8 - len(it_staffing_data['gross_income']))
+                print(f"DEBUG IT Staffing Chart - Gross income data: {gross_income_data}")
+            
+            if 'net_income' in it_staffing_data:
+                net_income_data = it_staffing_data['net_income'][:8] if len(it_staffing_data['net_income']) >= 8 else it_staffing_data['net_income'] + [0] * (8 - len(it_staffing_data['net_income']))
+                print(f"DEBUG IT Staffing Chart - Net income data: {net_income_data}")
+        else:
+            print("DEBUG IT Staffing Chart - No IT Staffing Net Income data found")
         
         datasets = [
             {
@@ -3800,4 +3678,9 @@ if __name__ == '__main__':
     # DISABLED: Don't auto-load recruitment data on startup
     # init_recruitment_database()
     # load_recruitment_csv_data()
-    app.run(debug=True, host='0.0.0.0', port=5004)
+    
+    # Get port from environment variable (Railway provides this)
+    port = int(os.environ.get('PORT', 5004))
+    
+    # Run the app
+    app.run(debug=False, host='0.0.0.0', port=port)

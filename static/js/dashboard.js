@@ -13,13 +13,24 @@ function scrollToTop() {
 function checkForExistingData() {
     console.log('=== CHECKING FOR EXISTING DATA ===');
     
-    // DISABLED: Don't auto-load data on page load
-    // Users should explicitly upload files to see data
-    console.log('Auto-loading disabled - users must upload files to see data');
-    
-    // Clear any existing localStorage data to prevent auto-loading
-    localStorage.removeItem('recruitmentData');
-    localStorage.removeItem('financeData');
+    // Check for existing data in session (server-side)
+    $.ajax({
+        url: '/check_existing_data',
+        method: 'GET',
+        success: function(response) {
+            console.log('Existing data check response:', response);
+            
+            if (response.has_data) {
+                console.log('Found existing data, restoring...');
+                restoreDashboardFromData(response);
+            } else {
+                console.log('No existing data found');
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error('Error checking existing data:', error);
+        }
+    });
 }
 
 function processFinanceReport() {
@@ -129,6 +140,12 @@ function renderFinanceCharts(charts) {
                 const chartData = charts[chartName];
                 console.log(`Chart data for ${chartName}:`, chartData);
                 
+                // Validate chart data structure
+                if (!chartData || !chartData.data || !chartData.data.labels) {
+                    console.error(`Invalid chart data structure for ${chartName}:`, chartData);
+                    return;
+                }
+                
                 // Clear any existing canvas
                 $container.empty();
                 
@@ -143,6 +160,7 @@ function renderFinanceCharts(charts) {
                 console.log(`Successfully rendered chart: ${chartName}`);
             } catch (e) {
                 console.error('Failed to render finance chart:', chartName, e);
+                console.error('Chart data that failed:', charts[chartName]);
             }
         } else {
             console.warn(`Chart container not found: ${chartId}`);
@@ -976,7 +994,33 @@ function restoreDashboardFromData(response) {
             renderPlacementCharts(data.charts);
         }
         
-        // Show the dashboard (hide upload screen) only if we're on recruitment dashboard
+        // Mark recruitment dashboard as having data
+        window.hasRecruitmentData = true;
+        
+        // Show the recruitment dashboard if we're on recruitment dashboard
+        const currentDashboard = getCurrentDashboard();
+        if (currentDashboard === 'recruitment') {
+            showDashboardAfterUpload();
+        }
+    } else if (window.recruitmentData) {
+        // If no server data but localStorage has data, restore from localStorage
+        console.log('Restoring recruitment data from localStorage...');
+        const data = window.recruitmentData;
+        
+        // Update KPIs
+        if (data.kpis) {
+            updatePlacementKPIs(data.kpis);
+        }
+        
+        // Render charts
+        if (data.charts) {
+            renderPlacementCharts(data.charts);
+        }
+        
+        // Mark recruitment dashboard as having data
+        window.hasRecruitmentData = true;
+        
+        // Show the recruitment dashboard if we're on recruitment dashboard
         const currentDashboard = getCurrentDashboard();
         if (currentDashboard === 'recruitment') {
             showDashboardAfterUpload();
@@ -1007,7 +1051,38 @@ function restoreDashboardFromData(response) {
             renderFinanceCharts(data.charts);
         }
         
-        // Show the dashboard (hide upload screen) only if we're on finance dashboard
+        // Mark finance dashboard as having data
+        window.hasFinanceData = true;
+        
+        // Show the finance dashboard if we're on finance dashboard
+        const currentDashboard = getCurrentDashboard();
+        if (currentDashboard === 'finance') {
+            showFinanceDashboardAfterUpload();
+        }
+    } else if (window.financeData) {
+        // If no server data but localStorage has data, restore from localStorage
+        console.log('Restoring finance data from localStorage...');
+        const data = window.financeData;
+        
+        // Update KPIs
+        if (data.kpis) {
+            updateFinanceKPIs(data.kpis);
+        }
+        
+        // Update specific financial values
+        if (data.specific_values) {
+            updateSpecificFinancialValues(data.specific_values);
+        }
+        
+        // Render charts
+        if (data.charts) {
+            renderFinanceCharts(data.charts);
+        }
+        
+        // Mark finance dashboard as having data
+        window.hasFinanceData = true;
+        
+        // Show the finance dashboard if we're on finance dashboard
         const currentDashboard = getCurrentDashboard();
         if (currentDashboard === 'finance') {
             showFinanceDashboardAfterUpload();
@@ -1341,7 +1416,8 @@ function handleFileUpload(file, fileType) {
                     updateUploadArea(fileType, file.name);
                     sessionStorage.setItem(fileType + '_file', response.file_path);
                     
-                    // Automatically process the finance report
+                    // Only process finance report for finance files
+                    console.log('Processing finance file only - not recruitment data');
                     processFinanceReport();
                 } else {
                     // Handle regular CSV/Excel files
@@ -1563,6 +1639,9 @@ function renderPlacementCharts(charts) {
     // Ensure we stay at the top when rendering charts
     setTimeout(scrollToTop, 100);
     
+    console.log('=== RENDERING PLACEMENT CHARTS ===');
+    console.log('Charts to render:', Object.keys(charts));
+    
     Object.keys(charts).forEach(chartName => {
         let chartId = 'chart-' + chartName.replace('_', '-');
         
@@ -1571,19 +1650,25 @@ function renderPlacementCharts(charts) {
             'employment_types': 'chart-employment-types',
             'placement_metrics': 'chart-placement-metrics',
             'billables_trend': 'chart-billables-trend',
-            'gross_margin': 'chart-gross-margin',
-            'direct_hire': 'chart-direct-hire',
-            'services': 'chart-services',
-            'it_staffing': 'chart-it-staffing'
+            'gross_margin': 'chart-gross-margin'
         };
         
         chartId = chartMapping[chartName] || chartId;
         
+        console.log(`Looking for chart container: ${chartId}`);
         const $container = $('#' + chartId);
+        console.log(`Found container:`, $container.length);
         
         if ($container.length > 0) {
             try {
                 const chartData = charts[chartName];
+                console.log(`Chart data for ${chartName}:`, chartData);
+                
+                // Validate chart data structure
+                if (!chartData || !chartData.data || !chartData.data.labels) {
+                    console.error(`Invalid chart data structure for ${chartName}:`, chartData);
+                    return;
+                }
                 
                 // Clear any existing canvas
                 $container.empty();
@@ -1596,9 +1681,13 @@ function renderPlacementCharts(charts) {
                 const ctx = canvas.getContext('2d');
                 new Chart(ctx, chartData);
                 
+                console.log(`Successfully rendered chart: ${chartName}`);
             } catch (e) {
                 console.error('Failed to render chart:', chartName, e);
+                console.error('Chart data that failed:', charts[chartName]);
             }
+        } else {
+            console.warn(`Chart container not found: ${chartId}`);
         }
     });
 }
