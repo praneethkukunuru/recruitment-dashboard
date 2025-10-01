@@ -1628,10 +1628,8 @@ function updatePlacementKPIs(kpis) {
         // Update KPI values with proper mapping
         $('#kpi-total-placements').text(kpis['Total Placements'] || '—');
         $('#kpi-total-terminations').text(kpis['Total Terminations'] || '—');
-        $('#kpi-net-placements').text(kpis['Net Placements (Latest Month)'] || '—');
-        $('#kpi-total-billables').text(kpis['Total Current Billables'] || '—');
-        $('#kpi-w2-placements').text(kpis['W2 Placements'] || '—');
-        $('#kpi-c2c-placements').text(kpis['C2C Placements'] || '—');
+        $('#kpi-net-placements').text(kpis['Net Placements'] || '—');
+        $('#kpi-net-billables').text(kpis['Net Billables'] || '—');
     }
 }
 
@@ -1647,7 +1645,6 @@ function renderPlacementCharts(charts) {
         
         // Handle special chart mappings
         const chartMapping = {
-            'employment_types': 'chart-employment-types',
             'placement_metrics': 'chart-placement-metrics',
             'billables_trend': 'chart-billables-trend',
             'gross_margin': 'chart-gross-margin'
@@ -1865,9 +1862,7 @@ function renderCharts(charts) {
         let chartId = 'chart-' + chartName.replace('_', '-');
         
         // Handle special chart mappings for recruitment placement report
-        if (chartName === 'employment_types') {
-            chartId = 'chart-employment-types';
-        } else if (chartName === 'placement_metrics') {
+        if (chartName === 'placement_metrics') {
             chartId = 'chart-placement-metrics';
         }
         
@@ -2774,4 +2769,42 @@ function saveFormula() {
 $(document).ready(function() {
     // Make KPI cards clickable after a short delay to ensure they're rendered
     setTimeout(makeKPICardsClickable, 1000);
+    loadUserProfile();
 });
+
+// User Authentication Functions
+function loadUserProfile() {
+    fetch('/user/profile')
+    .then(response => response.json())
+    .then(data => {
+        if (data.user) {
+            updateUserProfile(data.user);
+        }
+    })
+    .catch(error => {
+        console.error('Error loading user profile:', error);
+        // Redirect to login if not authenticated
+        window.location.href = '/login';
+    });
+}
+
+function updateUserProfile(user) {
+    const userAvatar = document.getElementById('user-avatar');
+    const userName = document.getElementById('user-name');
+    
+    if (user.picture) {
+        userAvatar.src = user.picture;
+    } else {
+        // Generate initials avatar if no picture
+        const initials = user.name.split(' ').map(n => n[0]).join('').toUpperCase();
+        userAvatar.src = `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" fill="%23667eea"/><text x="16" y="20" text-anchor="middle" fill="white" font-family="Arial" font-size="12" font-weight="bold">${initials}</text></svg>`;
+    }
+    
+    userName.textContent = user.name;
+}
+
+function logout() {
+    if (confirm('Are you sure you want to logout?')) {
+        window.location.href = '/logout';
+    }
+}

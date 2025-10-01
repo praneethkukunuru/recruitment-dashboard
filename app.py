@@ -16,17 +16,66 @@ import json
 import os
 from typing import Dict, List, Optional
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 import numpy as np
 import pandas as pd
 # Removed plotly imports - using Chart.js instead
-from flask import Flask, render_template, request, jsonify, send_file, session
+from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
+import json
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
 import os
 import sqlite3
+import requests as req
+from google.oauth2 import id_token
+from google.auth.transport import requests
+
+# Custom JSON encoder to handle datetime objects
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.strftime('%Y-%m-%d %H:%M:%S')
+        elif isinstance(obj, pd.Timestamp):
+            return obj.strftime('%Y-%m-%d %H:%M:%S')
+        elif hasattr(obj, 'year') and hasattr(obj, 'month'):
+            return str(obj)
+        return super().default(obj)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here-change-in-production')
+app.json_encoder = DateTimeEncoder
+
+# Configure Flask-Login
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+# Google OAuth configuration
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', 'your-google-client-id-here')
+
+class User(UserMixin):
+    def __init__(self, user_id, email, name, picture=None):
+        self.id = user_id
+        self.email = email
+        self.name = name
+        self.picture = picture
+
+@login_manager.user_loader
+def load_user(user_id):
+    # Load user from database or session
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, email, name, picture FROM users WHERE user_id = ?', (user_id,))
+    user_data = cursor.fetchone()
+    conn.close()
+    
+    if user_data:
+        return User(user_data[0], user_data[1], user_data[2], user_data[3])
+    return None
 
 # Configure session to persist
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hours
@@ -60,51 +109,171 @@ def allowed_file(filename, allowed_extensions):
 DB_PATH = 'recruitment_data.db'
 
 def init_recruitment_database():
-    """Initialize SQLite database with recruitment data tables"""
+    """Initialize SQLite database with user and data tables"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # Employment types data (W2, C2C, 1099, Referral)
+    # Users table for authentication
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS employment_data (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            month TEXT NOT NULL,
-            w2 INTEGER DEFAULT 0,
-            c2c INTEGER DEFAULT 0,
-            employment_1099 INTEGER DEFAULT 0,
-            referral INTEGER DEFAULT 0,
-            total_billables INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            picture TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
-    # Placement metrics data
+    # User-specific processed recruitment data
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS placement_data (
+        CREATE TABLE IF NOT EXISTS user_recruitment_data (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            month TEXT NOT NULL,
-            new_placements INTEGER DEFAULT 0,
-            terminations INTEGER DEFAULT 0,
-            net_placements INTEGER DEFAULT 0,
-            net_billables INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            user_id TEXT NOT NULL,
+            data_type TEXT NOT NULL,
+            data_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
         )
     ''')
     
-    # Gross margin data
+    # User-specific processed finance data
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS margin_data (
+        CREATE TABLE IF NOT EXISTS user_finance_data (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            company_type TEXT NOT NULL,
-            year_2024 INTEGER DEFAULT 0,
-            year_2025 INTEGER DEFAULT 0,
-            total INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            user_id TEXT NOT NULL,
+            data_type TEXT NOT NULL,
+            data_json TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+    ''')
+    
+    # User-specific uploaded files
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            file_type TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
         )
     ''')
     
     conn.commit()
     conn.close()
+
+def save_user_recruitment_data(user_id, data_type, data):
+    """Save user-specific recruitment data to database"""
+    import json
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Convert data to JSON string
+    data_json = json.dumps(data)
+    
+    # Check if data already exists for this user
+    cursor.execute('SELECT id FROM user_recruitment_data WHERE user_id = ? AND data_type = ?', (user_id, data_type))
+    existing = cursor.fetchone()
+    
+    if existing:
+        # Update existing record
+        cursor.execute('''
+            UPDATE user_recruitment_data 
+            SET data_json = ?, updated_at = CURRENT_TIMESTAMP 
+            WHERE user_id = ? AND data_type = ?
+        ''', (data_json, user_id, data_type))
+    else:
+        # Insert new record
+        cursor.execute('''
+            INSERT INTO user_recruitment_data (user_id, data_type, data_json)
+            VALUES (?, ?, ?)
+        ''', (user_id, data_type, data_json))
+    
+    conn.commit()
+    conn.close()
+    print(f"Saved {data_type} data for user {user_id} to database")
+
+def load_user_recruitment_data(user_id, data_type):
+    """Load user-specific recruitment data from database"""
+    import json
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT data_json FROM user_recruitment_data WHERE user_id = ? AND data_type = ?', (user_id, data_type))
+    result = cursor.fetchone()
+    
+    conn.close()
+    
+    if result:
+        try:
+            data = json.loads(result[0])
+            print(f"Loaded {data_type} data for user {user_id} from database")
+            return data
+        except json.JSONDecodeError as e:
+            print(f"Error decoding {data_type} data for user {user_id}: {e}")
+            return None
+    else:
+        print(f"No {data_type} data found for user {user_id} in database")
+        return None
+
+def save_user_finance_data(user_id, data_type, data):
+    """Save user-specific finance data to database"""
+    import json
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Convert data to JSON string
+    data_json = json.dumps(data)
+    
+    # Check if data already exists for this user
+    cursor.execute('SELECT id FROM user_finance_data WHERE user_id = ? AND data_type = ?', (user_id, data_type))
+    existing = cursor.fetchone()
+    
+    if existing:
+        # Update existing record
+        cursor.execute('''
+            UPDATE user_finance_data 
+            SET data_json = ?, updated_at = CURRENT_TIMESTAMP 
+            WHERE user_id = ? AND data_type = ?
+        ''', (data_json, user_id, data_type))
+    else:
+        # Insert new record
+        cursor.execute('''
+            INSERT INTO user_finance_data (user_id, data_type, data_json)
+            VALUES (?, ?, ?)
+        ''', (user_id, data_type, data_json))
+    
+    conn.commit()
+    conn.close()
+    print(f"Saved {data_type} data for user {user_id} to database")
+
+def load_user_finance_data(user_id, data_type):
+    """Load user-specific finance data from database"""
+    import json
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT data_json FROM user_finance_data WHERE user_id = ? AND data_type = ?', (user_id, data_type))
+    result = cursor.fetchone()
+    
+    conn.close()
+    
+    if result:
+        try:
+            data = json.loads(result[0])
+            print(f"Loaded {data_type} data for user {user_id} from database")
+            return data
+        except json.JSONDecodeError as e:
+            print(f"Error decoding {data_type} data for user {user_id}: {e}")
+            return None
+    else:
+        print(f"No {data_type} data found for user {user_id} in database")
+        return None
 
 def load_recruitment_csv_data():
     """Load data from the existing CSV file"""
@@ -1288,6 +1457,9 @@ def extract_business_unit_data(df: pd.DataFrame) -> Dict:
                     month_name = col.strftime('%b')
                 months.append(month_name)
         
+        # Ensure months list contains only strings (not datetime objects)
+        months = [str(month) for month in months]
+        
         print(f"DEBUG: Found {len(month_columns)} month columns: {month_columns}")
         
         # Extract revenue data
@@ -2137,32 +2309,6 @@ def calculate_placement_kpis(sheet1_data: Dict, sheet2_data: Dict, sheet3_data: 
     kpis = {}
     
     try:
-        # Total Current Billables (from latest month - August)
-        if sheet2_data and 'billables_data' in sheet2_data:
-            total_billables = sheet2_data['billables_data'].get('Total billables', [0] * 8)
-            if total_billables:
-                kpis['Total Current Billables'] = f"{total_billables[7]:.0f}"  # August
-        
-        # W2 Placements (current)
-        if sheet1_data:
-            tg_w2 = sheet1_data.get('tg_data', {}).get('TG W2', [0] * 8)
-            vnst_w2 = sheet1_data.get('vnst_data', {}).get('VNST W2', [0] * 8)
-            total_w2 = (tg_w2[7] if tg_w2 else 0) + (vnst_w2[7] if vnst_w2 else 0)
-            kpis['W2 Placements'] = f"{total_w2:.0f}"
-        
-        # C2C Placements (current)
-        if sheet1_data:
-            tg_c2c = sheet1_data.get('tg_data', {}).get('TG C2C', [0] * 8)
-            vnst_c2c = sheet1_data.get('vnst_data', {}).get('VNST C2C', [0] * 8)
-            total_c2c = (tg_c2c[7] if tg_c2c else 0) + (vnst_c2c[7] if vnst_c2c else 0)
-            kpis['C2C Placements'] = f"{total_c2c:.0f}"
-        
-        # Net Placements (latest month)
-        if sheet2_data and 'placement_metrics' in sheet2_data:
-            net_placements = sheet2_data['placement_metrics'].get('Net Placements', [0] * 8)
-            if net_placements:
-                kpis['Net Placements (Latest Month)'] = f"{net_placements[7]:.0f}"  # August
-        
         # Total Placements (sum of all months)
         if sheet2_data and 'placement_metrics' in sheet2_data:
             new_placements = sheet2_data['placement_metrics'].get('New Placements', [0] * 8)
@@ -2177,23 +2323,129 @@ def calculate_placement_kpis(sheet1_data: Dict, sheet2_data: Dict, sheet3_data: 
                 total_terminations = sum(terminations)
                 kpis['Total Terminations'] = f"{total_terminations:.0f}"
         
-        # Gross Margin Total
-        if sheet3_data and 'margin_data' in sheet3_data:
-            total_margin = sum(margin_data.get('total', 0) for margin_data in sheet3_data['margin_data'].values())
-            kpis['Gross Margin Total'] = f"${total_margin:.2f}"
+        # Net Placements (total placements - total terminations)
+        if sheet2_data and 'placement_metrics' in sheet2_data:
+            new_placements = sheet2_data['placement_metrics'].get('New Placements', [0] * 8)
+            terminations = sheet2_data['placement_metrics'].get('Terminations', [0] * 8)
+            if new_placements and terminations:
+                total_placements = sum(new_placements)
+                total_terminations = sum(terminations)
+                net_placements = total_placements - total_terminations
+                kpis['Net Placements'] = f"{net_placements:.0f}"
+        
+        # Net Billables (from latest month - August)
+        if sheet2_data and 'placement_metrics' in sheet2_data:
+            net_billables = sheet2_data['placement_metrics'].get('Net billables', [0] * 8)
+            if net_billables:
+                kpis['Net Billables'] = f"{net_billables[7]:.0f}"  # August
         
     except Exception as e:
-        print(f"Error calculating KPIs: {e}")
+        print(f"Error calculating placement KPIs: {e}")
     
     return kpis
 
-# --------------------- Routes ---------------------
+# --------------------- Authentication Routes ---------------------
+
+@app.route('/login')
+def login():
+    """Show login page"""
+    return render_template('login.html')
+
+@app.route('/auth/google', methods=['POST'])
+def google_auth():
+    """Handle Google OAuth authentication"""
+    try:
+        token = request.json.get('token')
+        if not token:
+            return jsonify({'success': False, 'error': 'No token provided'})
+        
+        # Verify the token with Google
+        try:
+            idinfo = id_token.verify_oauth2_token(token, requests.Request(), GOOGLE_CLIENT_ID)
+            
+            # Extract user information
+            user_id = idinfo['sub']
+            email = idinfo['email']
+            name = idinfo.get('name', email)
+            picture = idinfo.get('picture')
+            
+            # Create or update user in database
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            # Check if user exists
+            cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
+            existing_user = cursor.fetchone()
+            
+            if existing_user:
+                # Update last login
+                cursor.execute('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = ?', (user_id,))
+            else:
+                # Create new user
+                cursor.execute('''
+                    INSERT INTO users (user_id, email, name, picture)
+                    VALUES (?, ?, ?, ?)
+                ''', (user_id, email, name, picture))
+            
+            conn.commit()
+            conn.close()
+            
+            # Create user object and log them in
+            user = User(user_id, email, name, picture)
+            login_user(user, remember=True)
+            
+            return jsonify({
+                'success': True,
+                'user': {
+                    'id': user_id,
+                    'email': email,
+                    'name': name,
+                    'picture': picture
+                }
+            })
+            
+        except ValueError as e:
+            return jsonify({'success': False, 'error': 'Invalid token'})
+            
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/auth/config')
+def auth_config():
+    """Provide authentication configuration to frontend"""
+    return jsonify({
+        'client_id': GOOGLE_CLIENT_ID
+    })
+
+@app.route('/logout')
+@login_required
+def logout():
+    """Logout user"""
+    logout_user()
+    return redirect(url_for('login'))
+
+@app.route('/user/profile')
+@login_required
+def user_profile():
+    """Get current user profile"""
+    return jsonify({
+        'user': {
+            'id': current_user.id,
+            'email': current_user.email,
+            'name': current_user.name,
+            'picture': current_user.picture
+        }
+    })
+
+# --------------------- Main Routes ---------------------
 
 @app.route('/')
+@login_required
 def index():
     return render_template('index.html')
 
 @app.route('/upload', methods=['POST'])
+@login_required
 def upload_file():
     try:
         print("DEBUG Upload - Starting upload process")
@@ -2310,9 +2562,11 @@ def upload_file():
         return jsonify({'error': f'Error processing file: {str(e)}'})
 
 @app.route('/process_placement_report', methods=['POST'])
+@login_required
 def process_placement_report_route():
     """Process placement report Excel file and generate analytics"""
     print("=== PROCESSING PLACEMENT REPORT ROUTE ===")
+    print(f"User: {current_user.id}")
     print(f"Session keys at start: {list(session.keys())}")
     
     if 'rec_file' not in session:
@@ -2345,12 +2599,6 @@ def process_placement_report_route():
         # Generate charts
         charts = {}
         
-        # Employment types chart from Sheet 1
-        if sheet1_data:
-            employment_chart = create_employment_types_chart_from_sheets(sheet1_data)
-            if employment_chart:
-                charts['employment_types'] = employment_chart
-        
         # Placement metrics chart from Sheet 2
         if sheet2_data:
             placement_chart = create_placement_metrics_chart_from_sheets(sheet2_data)
@@ -2372,31 +2620,32 @@ def process_placement_report_route():
         # Calculate KPIs
         kpis = calculate_placement_kpis(sheet1_data, sheet2_data, sheet3_data)
         
-        # Store processed data in session for persistence (minimal data only)
-        session.permanent = True
-        print(f"=== STORING RECRUITMENT DATA IN SESSION ===")
-        print(f"Session keys before storing: {list(session.keys())}")
+        # Store processed data in database for persistence
+        print(f"=== STORING RECRUITMENT DATA IN DATABASE ===")
         
-        # Store only essential data to avoid cookie size limits
-        session['processed_data'] = {
+        # Prepare data for database storage
+        processed_data = {
             'charts': charts,
             'kpis': kpis,
+            'sheet1_data': sheet1_data,
+            'sheet2_data': sheet2_data,
+            'sheet3_data': sheet3_data,
             'processing_status': {
                 'sheet1_processed': bool(sheet1_data),
                 'sheet2_processed': bool(sheet2_data),
                 'sheet3_processed': bool(sheet3_data),
                 'sheet4_processed': not excel_data['sheet4_additional'].empty if 'sheet4_additional' in excel_data else False
             },
-            'has_data': True  # Simple flag to indicate data exists
+            'has_data': True
         }
-        print(f"Session keys after storing: {list(session.keys())}")
-        print(f"Recruitment data stored successfully")
         
-        # Verify the data was stored
-        if 'processed_data' in session:
-            print(f"VERIFIED: processed_data exists in session with keys: {list(session['processed_data'].keys())}")
-        else:
-            print("ERROR: processed_data was NOT stored in session!")
+        # Save to database (user-specific)
+        save_user_recruitment_data(current_user.id, 'main_data', processed_data)
+        
+        # Also store in session for immediate use (but database is the source of truth)
+        session.permanent = True
+        session['processed_data'] = processed_data
+        print(f"Recruitment data stored successfully in database and session for user {current_user.id}")
         
         return jsonify({
             'success': True,
@@ -2467,36 +2716,58 @@ def debug_finance_data():
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/check_existing_data')
+@login_required
 def check_existing_data():
-    """Check if there's existing processed data in session"""
+    """Check if there's existing processed data in database and session for current user"""
     print("=== CHECKING EXISTING DATA ===")
+    print(f"User: {current_user.id}")
     print(f"Session keys: {list(session.keys())}")
     print(f"Session permanent: {session.permanent}")
     print(f"Session ID: {session.get('_id', 'No ID')}")
-    print(f"Request headers: {dict(request.headers)}")
     
-    has_recruitment_data = 'processed_data' in session
-    has_finance_data = 'finance_processed_data' in session
+    # First check database for persistent data for this user
+    recruitment_data = load_user_recruitment_data(current_user.id, 'main_data')
+    finance_data = load_user_finance_data(current_user.id, 'main_data')
     
-    print(f"Has recruitment data: {has_recruitment_data}")
-    print(f"Has finance data: {has_finance_data}")
+    has_recruitment_data = recruitment_data is not None
+    has_finance_data = finance_data is not None
     
-    if has_recruitment_data:
-        print(f"Recruitment data keys: {list(session['processed_data'].keys())}")
-    if has_finance_data:
-        print(f"Finance data keys: {list(session['finance_processed_data'].keys())}")
+    print(f"Has recruitment data in database for user {current_user.id}: {has_recruitment_data}")
+    print(f"Has finance data in database for user {current_user.id}: {has_finance_data}")
     
-    if has_recruitment_data or has_finance_data:
+    # If data exists in database but not in session, load it into session
+    if has_recruitment_data and 'processed_data' not in session:
+        session['processed_data'] = recruitment_data
+        session.permanent = True
+        print("Loaded recruitment data from database into session")
+    
+    if has_finance_data and 'finance_processed_data' not in session:
+        session['finance_processed_data'] = finance_data
+        session.permanent = True
+        print("Loaded finance data from database into session")
+    
+    # Also check session for immediate data
+    has_recruitment_session = 'processed_data' in session
+    has_finance_session = 'finance_processed_data' in session
+    
+    print(f"Has recruitment data in session: {has_recruitment_session}")
+    print(f"Has finance data in session: {has_finance_session}")
+    
+    if has_recruitment_data or has_finance_data or has_recruitment_session or has_finance_session:
         result = {
             'has_data': True,
-            'has_recruitment_data': has_recruitment_data,
-            'has_finance_data': has_finance_data
+            'has_recruitment_data': has_recruitment_data or has_recruitment_session,
+            'has_finance_data': has_finance_data or has_finance_session
         }
         
         if has_recruitment_data:
+            result['recruitment_data'] = recruitment_data
+        elif has_recruitment_session:
             result['recruitment_data'] = session['processed_data']
         
         if has_finance_data:
+            result['finance_data'] = finance_data
+        elif has_finance_session:
             result['finance_data'] = session['finance_processed_data']
             
         print("Returning data found")
@@ -2507,7 +2778,42 @@ def check_existing_data():
             'has_data': False
         })
 
+def clean_data_for_json(data):
+    """Recursively clean data to ensure JSON serialization compatibility"""
+    if isinstance(data, dict):
+        cleaned_dict = {}
+        for key, value in data.items():
+            try:
+                cleaned_dict[key] = clean_data_for_json(value)
+            except Exception as e:
+                print(f"ERROR cleaning dict key '{key}': {e}")
+                cleaned_dict[key] = str(value)
+        return cleaned_dict
+    elif isinstance(data, list):
+        cleaned_list = []
+        for i, item in enumerate(data):
+            try:
+                cleaned_list.append(clean_data_for_json(item))
+            except Exception as e:
+                print(f"ERROR cleaning list item {i}: {e}")
+                cleaned_list.append(str(item))
+        return cleaned_list
+    elif isinstance(data, pd.Timestamp):
+        return data.strftime('%Y-%m-%d %H:%M:%S')
+    elif isinstance(data, datetime):
+        return data.strftime('%Y-%m-%d %H:%M:%S')
+    elif hasattr(data, 'year') and hasattr(data, 'month'):
+        # Handle other datetime-like objects
+        return str(data)
+    elif isinstance(data, (int, float, str, bool)) or data is None:
+        return data
+    else:
+        # Convert any other objects to string
+        print(f"WARNING: Converting unknown object type {type(data)} to string: {data}")
+        return str(data)
+
 @app.route('/process_finance_report', methods=['POST'])
+@login_required
 def process_finance_report():
     """Process finance Excel file and generate analytics"""
     try:
@@ -2558,32 +2864,43 @@ def process_finance_report():
         kpis = calculate_comprehensive_finance_kpis(processed_data)
         print(f"KPIs calculated: {list(kpis.keys())}")
         
-        print("=== STORING IN SESSION ===")
-        # Store processed data in session (minimal data to avoid cookie size limits)
+        print("=== STORING IN DATABASE ===")
+        # Store processed data in database for persistence
         session.permanent = True
         print(f"Session keys before storing finance data: {list(session.keys())}")
         filename = os.path.basename(file_path)
         
-        # Store only essential data to avoid cookie size limits
-        session['finance_processed_data'] = {
-            'kpis': kpis,
-            'charts': charts,
+        # Prepare data for database storage (clean data for JSON compatibility)
+        finance_processed_data = {
+            'kpis': clean_data_for_json(kpis),
+            'charts': clean_data_for_json(charts),
             'filename': filename,
             'sheet_names': excel_data.get('sheet_names', []),
-            'specific_values': specific_values,
-            'has_data': True  # Simple flag to indicate data exists
+            'specific_values': clean_data_for_json(specific_values),
+            'processed_data': clean_data_for_json(processed_data),
+            'has_data': True
         }
+        
+        # Save to database (user-specific)
+        save_user_finance_data(current_user.id, 'main_data', finance_processed_data)
+        
+        # Also store in session for immediate use (but database is the source of truth)
+        session['finance_processed_data'] = finance_processed_data
         print(f"Session keys after storing finance data: {list(session.keys())}")
-        print("Session data stored successfully")
+        print(f"Finance data stored successfully in database and session for user {current_user.id}")
         
         print("=== FINANCE REPORT PROCESSING SUCCESS ===")
+        # Clean data to ensure JSON serialization compatibility
+        cleaned_processed_data = clean_data_for_json(processed_data)
+        cleaned_specific_values = clean_data_for_json(specific_values)
+        
         return jsonify({
             'success': True,
             'kpis': kpis,
             'charts': charts,
             'sheet_count': len(excel_data.get('sheet_names', [])),
-            'processed_data': processed_data,
-            'specific_values': specific_values
+            'processed_data': cleaned_processed_data,
+            'specific_values': cleaned_specific_values
         })
             
     except Exception as e:
@@ -3479,12 +3796,9 @@ def process_data():
             placement_data = process_placement_report(rec_df_raw)
             if placement_data and placement_data.get('employment_data'):
                 # Create placement report charts
-                emp_chart = create_employment_types_chart(placement_data)
                 placement_chart = create_placement_metrics_chart(placement_data)
                 margin_chart = create_gross_margin_chart(placement_data)
                 
-                if emp_chart:
-                    charts['employment_types'] = emp_chart
                 if placement_chart:
                     charts['placement_metrics'] = placement_chart
                 if margin_chart:
@@ -3675,12 +3989,12 @@ def export_recruitment_report():
     )
 
 if __name__ == '__main__':
-    # DISABLED: Don't auto-load recruitment data on startup
-    # init_recruitment_database()
-    # load_recruitment_csv_data()
+    # Initialize database on startup
+    init_recruitment_database()
+    print("Database initialized successfully")
     
     # Get port from environment variable (Railway provides this)
-    port = int(os.environ.get('PORT', 5004))
+    port = int(os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 5004)))
     
     # Run the app
     app.run(debug=False, host='0.0.0.0', port=port)

@@ -25,6 +25,17 @@
                 <span class="dashboard-title" id="dashboard-title">Finance Dashboard</span>
             </div>
         </div>
+        <div class="navbar-right">
+            <div class="user-profile" id="user-profile">
+                <div class="user-info">
+                    <img id="user-avatar" src="" alt="User Avatar" class="user-avatar">
+                    <span id="user-name" class="user-name">Loading...</span>
+                </div>
+                <div class="user-menu">
+                    <button onclick="logout()" class="logout-btn">Logout</button>
+                </div>
+            </div>
+        </div>
     </nav>
 
     <!-- Sliding Sidebar Menu -->
@@ -381,17 +392,9 @@
                         <div class="kpi-label">Net Placements</div>
                         <div class="kpi-value" id="kpi-net-placements">—</div>
                     </div>
-                    <div class="kpi-card" data-kpi="total_billables">
-                        <div class="kpi-label">Total Billables</div>
-                        <div class="kpi-value" id="kpi-total-billables">—</div>
-                    </div>
-                    <div class="kpi-card" data-kpi="w2_placements">
-                        <div class="kpi-label">W2 Placements</div>
-                        <div class="kpi-value" id="kpi-w2-placements">—</div>
-                    </div>
-                    <div class="kpi-card" data-kpi="c2c_placements">
-                        <div class="kpi-label">C2C Placements</div>
-                        <div class="kpi-value" id="kpi-c2c-placements">—</div>
+                    <div class="kpi-card" data-kpi="net_billables">
+                        <div class="kpi-label">Net Billables</div>
+                        <div class="kpi-value" id="kpi-net-billables">—</div>
                     </div>
                 </div>
             </div>
@@ -402,19 +405,15 @@
                 <div id="recruitment-charts-container">
                     <div class="chart-row">
                         <div class="chart-container">
-                            <h4>Employment Types by Month</h4>
-                            <div id="chart-employment-types"></div>
-                        </div>
-                        <div class="chart-container">
                             <h4>Placement Metrics</h4>
                             <div id="chart-placement-metrics"></div>
                         </div>
-                    </div>
-                    <div class="chart-row">
                         <div class="chart-container">
                             <h4>Gross Margin Analysis</h4>
                             <div id="chart-gross-margin"></div>
                         </div>
+                    </div>
+                    <div class="chart-row">
                         <div class="chart-container">
                             <h4>Billables Trend</h4>
                             <div id="chart-billables-trend"></div>
