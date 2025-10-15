@@ -164,11 +164,23 @@
         </div>
 
         <!-- Main Content Area -->
-        <div class="main-content">
+        <div class="main-content" id="main-content">
+            <!-- Loading Screen -->
+            <div class="loading-screen" id="loading-screen">
+                <div class="loading-container">
+                    <div class="loading-spinner">
+                        <div class="spinner"></div>
+                    </div>
+                    <div class="loading-text">
+                        <h2>Loading Dashboard</h2>
+                        <p>Checking for existing data...</p>
+                    </div>
+                </div>
+            </div>
             <!-- Finance Dashboard -->
             <div class="dashboard-view" id="finance-dashboard">
             <!-- Full Screen Upload Zone (Initial State) -->
-            <div class="fullscreen-upload-zone" id="finance-upload-section">
+            <div class="fullscreen-upload-zone" id="finance-upload-section" style="display: none;">
                 <div class="upload-container">
                     <div class="upload-content">
                         <div class="upload-icon-large">💰</div>
@@ -335,7 +347,7 @@
         <!-- Recruitment Dashboard -->
         <div class="dashboard-view" id="recruitment-dashboard" style="display: none;">
             <!-- Full Screen Upload Zone (Initial State) -->
-            <div class="fullscreen-upload-zone" id="initial-upload-section">
+            <div class="fullscreen-upload-zone" id="initial-upload-section" style="display: none;">
                 <div class="upload-container">
                     <div class="upload-content">
                         <div class="upload-icon-large">📊</div>
@@ -362,10 +374,6 @@
                 </div>
             </div>
 
-
-            <div id="no-rec-data-message" class="info-message">
-                Upload your placement report Excel file above to start analyzing employment types, placement metrics, and gross margins.
-            </div>
 
             <!-- Recruitment KPIs Section -->
             <div class="section">
@@ -425,7 +433,112 @@
 
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
     <script>
-        let currentDashboard = 'finance';
+        // Initialize dashboard based on localStorage or default to finance
+        let currentDashboard = localStorage.getItem('currentDashboard') || 'finance';
+        
+        // Initialize the dashboard on page load
+        $(document).ready(function() {
+            // First, check for existing data to determine initial UI state
+            checkForExistingDataOnLoad();
+        });
+        
+        function checkForExistingDataOnLoad() {
+            // Check for existing data via AJAX
+            $.ajax({
+                url: '/check_existing_data',
+                method: 'GET',
+                success: function(response) {
+                    console.log('Page load - data check response:', response);
+                    
+                    // Determine which dashboard to show based on data availability
+                    let dashboardToShow = currentDashboard;
+                    
+                    // If we have data for the current dashboard, show it
+                    // If not, show the upload screen for that dashboard
+                    if (dashboardToShow === 'recruitment' && response.has_recruitment_data) {
+                        // Show recruitment dashboard with data
+                        showRecruitmentDashboardWithData();
+                    } else if (dashboardToShow === 'finance' && response.has_finance_data) {
+                        // Show finance dashboard with data
+                        showFinanceDashboardWithData();
+                    } else {
+                        // Show upload screen for the selected dashboard
+                        showUploadScreenForDashboard(dashboardToShow);
+                    }
+                },
+                error: function(error) {
+                    console.error('Error checking existing data on page load:', error);
+                    // Default to showing upload screen for the selected dashboard
+                    showUploadScreenForDashboard(currentDashboard);
+                }
+            });
+        }
+        
+        function showRecruitmentDashboardWithData() {
+            // Hide loading screen
+            hideLoadingScreen();
+            // Switch to recruitment dashboard
+            switchDashboard('recruitment');
+        }
+        
+        function showFinanceDashboardWithData() {
+            // Hide loading screen
+            hideLoadingScreen();
+            // Switch to finance dashboard
+            switchDashboard('finance');
+        }
+        
+        function showUploadScreenForDashboard(dashboardType) {
+            // Hide loading screen
+            hideLoadingScreen();
+            // Show the appropriate upload screen
+            if (dashboardType === 'recruitment') {
+                $('#recruitment-dashboard').show();
+                $('#finance-dashboard').hide();
+                $('#initial-upload-section').show();
+                $('.section').hide();
+            } else {
+                $('#finance-dashboard').show();
+                $('#recruitment-dashboard').hide();
+                $('#finance-upload-section').show();
+                $('.section').hide();
+            }
+            
+            // Update navigation
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            const navItems = document.querySelectorAll('.nav-item');
+            navItems.forEach(item => {
+                const text = item.textContent.toLowerCase();
+                if ((dashboardType === 'finance' && text.includes('finance')) ||
+                    (dashboardType === 'recruitment' && text.includes('recruitment'))) {
+                    item.classList.add('active');
+                }
+            });
+            
+            // Update title
+            const titles = {
+                'finance': 'Finance Dashboard',
+                'recruitment': 'Recruitment Dashboard'
+            };
+            document.getElementById('dashboard-title').textContent = titles[dashboardType];
+            
+            currentDashboard = dashboardType;
+            window.currentDashboard = dashboardType;
+            localStorage.setItem('currentDashboard', dashboardType);
+        }
+        
+        function hideLoadingScreen() {
+            const loadingScreen = document.getElementById('loading-screen');
+            loadingScreen.classList.add('hidden');
+            
+            // Remove the loading screen from DOM after transition completes
+            setTimeout(() => {
+                loadingScreen.style.display = 'none';
+            }, 500); // Match the CSS transition duration
+        }
         
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
@@ -477,6 +590,9 @@
             
             currentDashboard = dashboardType;
             window.currentDashboard = dashboardType;
+            
+            // Save current dashboard to localStorage for persistence
+            localStorage.setItem('currentDashboard', dashboardType);
             
             // Check for existing data and show appropriate UI
             checkAndShowDashboardUI(dashboardType);
@@ -593,11 +709,6 @@
             // Initialize main content classes
             const mainContent = document.querySelector('.main-content');
             const dataSidebar = document.getElementById('data-sidebar');
-            
-            currentDashboard = 'finance';
-            window.currentDashboard = 'finance';
-            dataSidebar.style.display = 'none';
-            mainContent.classList.add('finance-mode');
             
             // Check for existing data in session
             if (typeof checkForExistingData === 'function') {
