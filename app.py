@@ -34,6 +34,125 @@ import requests as req
 from google.oauth2 import id_token
 from google.auth.transport import requests
 
+# Simple file-based storage (no SQL required)
+BASE_DIR = os.path.dirname(__file__)
+
+# Try different writable directories for different deployment environments
+def get_data_dir():
+    """Get a writable data directory for different deployment environments"""
+    # Try different paths in order of preference
+    possible_paths = [
+        # PythonAnywhere writable directory
+        '/home/yourusername/data',
+        # Local development
+        os.path.join(BASE_DIR, 'data'),
+        # Temp directory fallback
+        '/tmp/recruitment_data',
+        # Current directory fallback
+        os.path.join(os.getcwd(), 'data')
+    ]
+    
+    for path in possible_paths:
+        try:
+            os.makedirs(path, exist_ok=True)
+            # Test write permissions
+            test_file = os.path.join(path, 'test_write.tmp')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            print(f"Using data directory: {path}")
+            return path
+        except (OSError, PermissionError):
+            continue
+    
+    # If all else fails, use current directory
+    fallback_path = os.path.join(os.getcwd(), 'data')
+    os.makedirs(fallback_path, exist_ok=True)
+    print(f"Using fallback data directory: {fallback_path}")
+    return fallback_path
+
+DATA_DIR = get_data_dir()
+
+# Configuration: Set to True to use file storage instead of SQLite
+USE_FILE_STORAGE = True
+# Fallback to session storage if file storage fails
+USE_SESSION_FALLBACK = True
+
+def ensure_dirs() -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(os.path.join(DATA_DIR, 'users'), exist_ok=True)
+
+def user_dir(user_id: str) -> str:
+    path = os.path.join(DATA_DIR, 'users', user_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+def read_json(path: str) -> Optional[dict]:
+    try:
+        if not os.path.exists(path):
+            return None
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+def write_json(path: str, payload: dict) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=False)
+
+def safe_save_user_data(user_id: str, data_type: str, data: dict, data_category: str = 'recruitment') -> bool:
+    """Save user data with fallback to session if file storage fails"""
+    try:
+        if USE_FILE_STORAGE:
+            if data_category == 'recruitment':
+                save_user_recruitment_data_file(user_id, data_type, data)
+            else:
+                save_user_finance_data_file(user_id, data_type, data)
+            return True
+    except Exception as e:
+        print(f"File storage failed: {e}")
+    
+    # Fallback to session storage
+    if USE_SESSION_FALLBACK:
+        try:
+            session_key = f'{data_category}_processed_data'
+            session[session_key] = data
+            session.permanent = True
+            print(f"Saved {data_type} data for user {user_id} to session (fallback)")
+            return True
+        except Exception as e:
+            print(f"Session storage also failed: {e}")
+    
+    return False
+
+def safe_load_user_data(user_id: str, data_type: str, data_category: str = 'recruitment') -> Optional[dict]:
+    """Load user data with fallback to session if file storage fails"""
+    # Try file storage first
+    if USE_FILE_STORAGE:
+        try:
+            if data_category == 'recruitment':
+                data = load_user_recruitment_data_file(user_id, data_type)
+            else:
+                data = load_user_finance_data_file(user_id, data_type)
+            if data is not None:
+                return data
+        except Exception as e:
+            print(f"File storage load failed: {e}")
+    
+    # Fallback to session storage
+    if USE_SESSION_FALLBACK:
+        try:
+            session_key = f'{data_category}_processed_data'
+            data = session.get(session_key)
+            if data:
+                print(f"Loaded {data_type} data for user {user_id} from session (fallback)")
+                return data
+        except Exception as e:
+            print(f"Session storage load failed: {e}")
+    
+    return None
+
 # Custom JSON encoder to handle datetime objects
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -46,7 +165,11 @@ class DateTimeEncoder(json.JSONEncoder):
         return super().default(obj)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here-change-in-production')
+# Hardcoded safe defaults for easier deploy (can be overridden via env vars)
+app.secret_key = os.environ.get(
+    'SECRET_KEY',
+    'recruitment-dashboard-secret-key-2024'
+)
 app.json_encoder = DateTimeEncoder
 
 # Configure Flask-Login
@@ -55,7 +178,10 @@ login_manager.init_app(app)
 login_manager.login_view = 'login'
 
 # Google OAuth configuration
-GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', 'your-google-client-id-here')
+GOOGLE_CLIENT_ID = os.environ.get(
+    'GOOGLE_CLIENT_ID',
+    '698166460427-nh1pooookkaka1t0odc7jmck1fjpq4nf.apps.googleusercontent.com'
+)
 
 class User(UserMixin):
     def __init__(self, user_id, email, name, picture=None):
@@ -66,15 +192,41 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    # Load user from database or session
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_id, email, name, picture FROM users WHERE user_id = ?', (user_id,))
-    user_data = cursor.fetchone()
-    conn.close()
-    
-    if user_data:
-        return User(user_data[0], user_data[1], user_data[2], user_data[3])
+    if USE_FILE_STORAGE:
+        return load_user_file(user_id)
+    else:
+        # Load user from database or session
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('SELECT user_id, email, name, picture FROM users WHERE user_id = ?', (user_id,))
+        user_data = cursor.fetchone()
+        conn.close()
+        
+        if user_data:
+            return User(user_data[0], user_data[1], user_data[2], user_data[3])
+        return None
+
+def save_user_profile_file(user_id, email, name, picture=None):
+    """Save user profile to file storage."""
+    profile_data = {
+        'user_id': user_id,
+        'email': email,
+        'name': name,
+        'picture': picture,
+        'created_at': datetime.now().isoformat(),
+        'last_login': datetime.now().isoformat()
+    }
+    path = os.path.join(user_dir(user_id), 'profile.json')
+    write_json(path, profile_data)
+    print(f"Saved profile for user {user_id} to file storage")
+
+def load_user_file(user_id):
+    """Load user from file storage."""
+    ensure_dirs()
+    profile_path = os.path.join(user_dir(user_id), 'profile.json')
+    data = read_json(profile_path)
+    if data:
+        return User(data.get('user_id'), data.get('email'), data.get('name'), data.get('picture'))
     return None
 
 # Configure session to persist
@@ -105,8 +257,11 @@ def allowed_file(filename, allowed_extensions):
     file_ext = '.' + filename.rsplit('.', 1)[1].lower()
     return file_ext in allowed_extensions
 
-# Database setup for recruitment data
-DB_PATH = 'recruitment_data.db'
+# Database setup for recruitment data (absolute path for deploy environments)
+DB_PATH = os.environ.get(
+    'DB_PATH',
+    os.path.join(os.path.dirname(__file__), 'recruitment_data.db')
+)
 
 def init_recruitment_database():
     """Initialize SQLite database with user and data tables"""
@@ -198,6 +353,12 @@ def save_user_recruitment_data(user_id, data_type, data):
     conn.close()
     print(f"Saved {data_type} data for user {user_id} to database")
 
+def save_user_recruitment_data_file(user_id, data_type, data):
+    """Save user-specific recruitment data to file storage."""
+    path = os.path.join(user_dir(user_id), f'recruitment_{data_type}.json')
+    write_json(path, data)
+    print(f"Saved {data_type} data for user {user_id} to file storage")
+
 def load_user_recruitment_data(user_id, data_type):
     """Load user-specific recruitment data from database"""
     import json
@@ -220,6 +381,14 @@ def load_user_recruitment_data(user_id, data_type):
     else:
         print(f"No {data_type} data found for user {user_id} in database")
         return None
+
+def load_user_recruitment_data_file(user_id, data_type):
+    """Load user-specific recruitment data from file storage."""
+    path = os.path.join(user_dir(user_id), f'recruitment_{data_type}.json')
+    data = read_json(path)
+    if data is not None:
+        print(f"Loaded {data_type} data for user {user_id} from file storage")
+    return data
 
 def save_user_finance_data(user_id, data_type, data):
     """Save user-specific finance data to database"""
@@ -252,6 +421,12 @@ def save_user_finance_data(user_id, data_type, data):
     conn.close()
     print(f"Saved {data_type} data for user {user_id} to database")
 
+def save_user_finance_data_file(user_id, data_type, data):
+    """Save user-specific finance data to file storage."""
+    path = os.path.join(user_dir(user_id), f'finance_{data_type}.json')
+    write_json(path, data)
+    print(f"Saved {data_type} data for user {user_id} to file storage")
+
 def load_user_finance_data(user_id, data_type):
     """Load user-specific finance data from database"""
     import json
@@ -274,6 +449,14 @@ def load_user_finance_data(user_id, data_type):
     else:
         print(f"No {data_type} data found for user {user_id} in database")
         return None
+
+def load_user_finance_data_file(user_id, data_type):
+    """Load user-specific finance data from file storage."""
+    path = os.path.join(user_dir(user_id), f'finance_{data_type}.json')
+    data = read_json(path)
+    if data is not None:
+        print(f"Loaded {data_type} data for user {user_id} from file storage")
+    return data
 
 def load_recruitment_csv_data():
     """Load data from the existing CSV file"""
@@ -2370,25 +2553,29 @@ def google_auth():
             picture = idinfo.get('picture')
             
             # Create or update user in database
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            
-            # Check if user exists
-            cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
-            existing_user = cursor.fetchone()
-            
-            if existing_user:
-                # Update last login
-                cursor.execute('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = ?', (user_id,))
+            if USE_FILE_STORAGE:
+                # Save user profile to file storage
+                save_user_profile_file(user_id, email, name, picture)
             else:
-                # Create new user
-                cursor.execute('''
-                    INSERT INTO users (user_id, email, name, picture)
-                    VALUES (?, ?, ?, ?)
-                ''', (user_id, email, name, picture))
-            
-            conn.commit()
-            conn.close()
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                
+                # Check if user exists
+                cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
+                existing_user = cursor.fetchone()
+                
+                if existing_user:
+                    # Update last login
+                    cursor.execute('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = ?', (user_id,))
+                else:
+                    # Create new user
+                    cursor.execute('''
+                        INSERT INTO users (user_id, email, name, picture)
+                        VALUES (?, ?, ?, ?)
+                    ''', (user_id, email, name, picture))
+                
+                conn.commit()
+                conn.close()
             
             # Create user object and log them in
             user = User(user_id, email, name, picture)
@@ -2421,7 +2608,14 @@ def auth_config():
 @login_required
 def logout():
     """Logout user"""
+    user_id = current_user.id
     logout_user()
+    session.clear()
+    
+    # Clean up user's uploaded files on logout (optional - you can comment this out if you want to keep files)
+    # cleanup_old_user_files(user_id, 'finance')
+    # cleanup_old_user_files(user_id, 'rec')
+    
     return redirect(url_for('login'))
 
 @app.route('/user/profile')
@@ -2436,6 +2630,49 @@ def user_profile():
             'picture': current_user.picture
         }
     })
+
+@app.route('/user/files')
+@login_required
+def user_files():
+    """Get list of files uploaded by current user"""
+    try:
+        uploads_dir = app.config['UPLOAD_FOLDER']
+        user_files = []
+        
+        if os.path.exists(uploads_dir):
+            import glob
+            # Look for files belonging to this user
+            patterns = [
+                f"{current_user.id}_finance_file_*.xlsx",
+                f"{current_user.id}_rec_file_*.xlsx"
+            ]
+            
+            for pattern in patterns:
+                files = glob.glob(os.path.join(uploads_dir, pattern))
+                for file_path in files:
+                    filename = os.path.basename(file_path)
+                    file_type = 'finance' if 'finance' in filename else 'rec'
+                    file_size = os.path.getsize(file_path)
+                    file_mtime = os.path.getmtime(file_path)
+                    
+                    user_files.append({
+                        'filename': filename,
+                        'file_type': file_type,
+                        'size': file_size,
+                        'uploaded_at': datetime.fromtimestamp(file_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                    })
+        
+        return jsonify({
+            'success': True,
+            'files': user_files,
+            'user_id': current_user.id
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 # --------------------- Main Routes ---------------------
 
@@ -2461,13 +2698,11 @@ def upload_file():
         
         if file:
             print(f"DEBUG Upload - Original filename: {file.filename}")
-            # Create a simple filename without using secure_filename
-            import time
-            timestamp = int(time.time())
-            filename = f"{file_type}_file_{timestamp}.xlsx"
-            print(f"DEBUG Upload - Generated filename: {filename}")
+            print(f"DEBUG Upload - User ID: {current_user.id}")
             
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            # Generate user-specific file path and clean up old files
+            file_path, filename = get_user_file_path(current_user.id, file_type, file.filename)
+            print(f"DEBUG Upload - Generated filename: {filename}")
             print(f"DEBUG Upload - File path: {file_path}")
             
             try:
@@ -2574,6 +2809,10 @@ def process_placement_report_route():
         return jsonify({'error': 'No placement report file uploaded'})
     
     file_path = session['rec_file']
+    # Verify the file belongs to the current user
+    if not file_path.startswith(f"uploads/{current_user.id}_rec_file_"):
+        print(f"ERROR: File {file_path} does not belong to user {current_user.id}")
+        return jsonify({'error': 'File access denied. Please upload a new file.'})
     print(f"Processing file: {file_path}")
     
     try:
@@ -2640,7 +2879,9 @@ def process_placement_report_route():
         }
         
         # Save to database (user-specific)
-        save_user_recruitment_data(current_user.id, 'main_data', processed_data)
+        success = safe_save_user_data(current_user.id, 'main_data', processed_data, 'recruitment')
+        if not success:
+            print(f"Warning: Failed to save recruitment data for user {current_user.id}")
         
         # Also store in session for immediate use (but database is the source of truth)
         session.permanent = True
@@ -2677,11 +2918,15 @@ def test_session():
     })
 
 @app.route('/set_finance_file')
+@login_required
 def set_finance_file():
-    """Manually set finance file for testing"""
-    session['finance_file'] = 'uploads/finance_Monthly_income_and_expenses.xlsx'
-    session.permanent = True
-    return jsonify({'success': True, 'file': session['finance_file']})
+    """Manually set finance file for testing - DEPRECATED: Use user-specific uploads instead"""
+    # This route is deprecated and should not be used in production
+    # It's kept for backward compatibility but will not work with user-specific file management
+    return jsonify({
+        'success': False, 
+        'error': 'This route is deprecated. Please upload files through the proper upload interface.'
+    })
 
 @app.route('/debug_finance_data')
 def debug_finance_data():
@@ -2726,8 +2971,8 @@ def check_existing_data():
     print(f"Session ID: {session.get('_id', 'No ID')}")
     
     # First check database for persistent data for this user
-    recruitment_data = load_user_recruitment_data(current_user.id, 'main_data')
-    finance_data = load_user_finance_data(current_user.id, 'main_data')
+    recruitment_data = safe_load_user_data(current_user.id, 'main_data', 'recruitment')
+    finance_data = safe_load_user_data(current_user.id, 'main_data', 'finance')
     
     has_recruitment_data = recruitment_data is not None
     has_finance_data = finance_data is not None
@@ -2778,6 +3023,42 @@ def check_existing_data():
             'has_data': False
         })
 
+def cleanup_old_user_files(user_id, file_type):
+    """Clean up old files for a specific user and file type"""
+    try:
+        uploads_dir = app.config['UPLOAD_FOLDER']
+        if not os.path.exists(uploads_dir):
+            return
+        
+        # Look for old files for this user and file type
+        pattern = f"{user_id}_{file_type}_file_*.xlsx"
+        import glob
+        old_files = glob.glob(os.path.join(uploads_dir, pattern))
+        
+        # Delete old files
+        for old_file in old_files:
+            try:
+                os.remove(old_file)
+                print(f"Cleaned up old file: {old_file}")
+            except Exception as e:
+                print(f"Error deleting old file {old_file}: {e}")
+                
+    except Exception as e:
+        print(f"Error in cleanup_old_user_files: {e}")
+
+def get_user_file_path(user_id, file_type, original_filename):
+    """Generate user-specific file path and clean up old files"""
+    # Clean up old files for this user and file type
+    cleanup_old_user_files(user_id, file_type)
+    
+    # Generate new filename
+    import time
+    timestamp = int(time.time())
+    filename = f"{user_id}_{file_type}_file_{timestamp}.xlsx"
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    
+    return file_path, filename
+
 def clean_data_for_json(data):
     """Recursively clean data to ensure JSON serialization compatibility"""
     if isinstance(data, dict):
@@ -2821,11 +3102,17 @@ def process_finance_report():
         
         # Get the file path from session (file was uploaded via /upload route)
         print(f"Session keys in process_finance_report: {list(session.keys())}")
+        print(f"Current user ID: {current_user.id}")
+        
         if 'finance_file' not in session:
-            print("No finance file in session, using default file for testing")
-            file_path = 'uploads/finance_Monthly_income_and_expenses.xlsx'
+            print("No finance file in session for current user")
+            return jsonify({'success': False, 'error': 'No finance file uploaded. Please upload a finance file first.'})
         else:
             file_path = session['finance_file']
+            # Verify the file belongs to the current user
+            if not file_path.startswith(f"uploads/{current_user.id}_finance_file_"):
+                print(f"ERROR: File {file_path} does not belong to user {current_user.id}")
+                return jsonify({'success': False, 'error': 'File access denied. Please upload a new file.'})
         
         print(f"Processing file: {file_path}")
         
@@ -2882,7 +3169,9 @@ def process_finance_report():
         }
         
         # Save to database (user-specific)
-        save_user_finance_data(current_user.id, 'main_data', finance_processed_data)
+        success = safe_save_user_data(current_user.id, 'main_data', finance_processed_data, 'finance')
+        if not success:
+            print(f"Warning: Failed to save finance data for user {current_user.id}")
         
         # Also store in session for immediate use (but database is the source of truth)
         session['finance_processed_data'] = finance_processed_data
@@ -3989,9 +4278,13 @@ def export_recruitment_report():
     )
 
 if __name__ == '__main__':
-    # Initialize database on startup
-    init_recruitment_database()
-    print("Database initialized successfully")
+    # Initialize storage on startup
+    if USE_FILE_STORAGE:
+        ensure_dirs()
+        print("File storage directories initialized successfully")
+    else:
+        init_recruitment_database()
+        print("Database initialized successfully")
     
     # Get port from environment variable (Railway provides this)
     port = int(os.environ.get('PORT', os.environ.get('FLASK_RUN_PORT', 5004)))

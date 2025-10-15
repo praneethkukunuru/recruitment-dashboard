@@ -634,63 +634,90 @@
             currentDashboard = dashboardType;
             window.currentDashboard = dashboardType;
             
-            // Show/hide data sidebar based on dashboard type
-            const dataSidebar = document.getElementById('data-sidebar');
-            const mainContent = document.querySelector('.main-content');
-            
-            if (dashboardType === 'recruitment') {
-                // Check if recruitment dashboard has data
-                const hasData = window.hasRecruitmentData || ($('#initial-upload-section').is(':hidden') && $('.section').is(':visible'));
-                if (hasData) {
-                    // Show sidebar for recruitment dashboard with data
-                    dataSidebar.style.display = 'block';
-                    mainContent.classList.remove('finance-mode');
-                    mainContent.classList.add('recruitment-mode');
-                } else {
-                    // Hide sidebar when no data (full screen upload mode)
-                    dataSidebar.style.display = 'none';
-                    mainContent.classList.remove('finance-mode', 'recruitment-mode');
-                }
-            } else if (dashboardType === 'finance') {
-                // Check if finance dashboard has data
-                const hasData = window.hasFinanceData || ($('#finance-upload-section').is(':hidden') && $('.section').is(':visible'));
-                if (hasData) {
-                    // Hide sidebar for finance dashboard with data
-                    dataSidebar.style.display = 'none';
-                    mainContent.classList.remove('recruitment-mode');
-                    mainContent.classList.add('finance-mode');
-                } else {
-                    // Hide sidebar when no data (full screen upload mode)
-                    dataSidebar.style.display = 'none';
-                    mainContent.classList.remove('finance-mode', 'recruitment-mode');
-                }
-            } else if (dashboardType === 'data-explorer') {
-                // Hide sidebar for data explorer
-                dataSidebar.style.display = 'none';
-                mainContent.classList.remove('finance-mode', 'recruitment-mode');
-                
-                // Load data explorer data when switching to it
-                if (typeof loadDataExplorerData === 'function') {
-                    loadDataExplorerData();
-                }
-            }
-            
-            // Restore UI for dashboard with existing data
-            if (dashboardType === 'recruitment' && window.recruitmentData) {
-                // Hide upload screen and show dashboard sections
-                $('#initial-upload-section').hide();
-                $('.section').show();
-            } else if (dashboardType === 'finance' && window.financeData) {
-                // Hide upload screen and show dashboard sections
-                $('#finance-upload-section').hide();
-                $('.section').show();
-            }
+            // Check for existing data and show appropriate UI
+            checkAndShowDashboardUI(dashboardType);
             
             // Close navigation sidebar after switching
             const sidebar = document.getElementById('sidebar');
             const overlay = document.getElementById('sidebar-overlay');
             sidebar.classList.remove('open');
             overlay.classList.remove('active');
+        }
+        
+        function checkAndShowDashboardUI(dashboardType) {
+            // Check for existing data via AJAX
+            $.ajax({
+                url: '/check_existing_data',
+                method: 'GET',
+                success: function(response) {
+                    console.log('Dashboard switch - data check response:', response);
+                    
+                    const dataSidebar = document.getElementById('data-sidebar');
+                    const mainContent = document.querySelector('.main-content');
+                    
+                    if (dashboardType === 'recruitment') {
+                        const hasData = response.has_recruitment_data || false;
+                        console.log('Recruitment dashboard has data:', hasData);
+                        
+                        if (hasData) {
+                            // Show sidebar for recruitment dashboard with data
+                            dataSidebar.style.display = 'block';
+                            mainContent.classList.remove('finance-mode');
+                            mainContent.classList.add('recruitment-mode');
+                            // Hide upload screen and show dashboard sections
+                            $('#initial-upload-section').hide();
+                            $('.section').show();
+                        } else {
+                            // Hide sidebar when no data (full screen upload mode)
+                            dataSidebar.style.display = 'none';
+                            mainContent.classList.remove('finance-mode', 'recruitment-mode');
+                            // Show upload screen and hide dashboard sections
+                            $('#initial-upload-section').show();
+                            $('.section').hide();
+                        }
+                    } else if (dashboardType === 'finance') {
+                        const hasData = response.has_finance_data || false;
+                        console.log('Finance dashboard has data:', hasData);
+                        
+                        if (hasData) {
+                            // Hide sidebar for finance dashboard with data
+                            dataSidebar.style.display = 'none';
+                            mainContent.classList.remove('recruitment-mode');
+                            mainContent.classList.add('finance-mode');
+                            // Hide upload screen and show dashboard sections
+                            $('#finance-upload-section').hide();
+                            $('.section').show();
+                        } else {
+                            // Hide sidebar when no data (full screen upload mode)
+                            dataSidebar.style.display = 'none';
+                            mainContent.classList.remove('finance-mode', 'recruitment-mode');
+                            // Show upload screen and hide dashboard sections
+                            $('#finance-upload-section').show();
+                            $('.section').hide();
+                        }
+                    } else if (dashboardType === 'data-explorer') {
+                        // Hide sidebar for data explorer
+                        dataSidebar.style.display = 'none';
+                        mainContent.classList.remove('finance-mode', 'recruitment-mode');
+                        
+                        // Load data explorer data when switching to it
+                        if (typeof loadDataExplorerData === 'function') {
+                            loadDataExplorerData();
+                        }
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.error('Error checking existing data during dashboard switch:', error);
+                    // Default to showing upload screens on error
+                    if (dashboardType === 'recruitment') {
+                        $('#initial-upload-section').show();
+                        $('.section').hide();
+                    } else if (dashboardType === 'finance') {
+                        $('#finance-upload-section').show();
+                        $('.section').hide();
+                    }
+                }
+            });
         }
         
         function showReports() {

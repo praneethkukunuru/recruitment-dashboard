@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - Recruitment Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script src="https://accounts.google.com/gsi/client"></script>
     <style>
         .login-container {
             display: flex;
@@ -125,7 +125,14 @@
             }, 5000);
         }
 
-        document.addEventListener('DOMContentLoaded', function() {
+        function initializeGoogleSignIn() {
+            // Check if Google script is loaded
+            if (typeof google === 'undefined' || !google.accounts) {
+                console.log('Google script not loaded yet, retrying...');
+                setTimeout(initializeGoogleSignIn, 100);
+                return;
+            }
+
             // Get Google Client ID from backend first
             fetch('/auth/config')
             .then(response => response.json())
@@ -158,6 +165,11 @@
                 console.error('Error getting Google Client ID:', error);
                 showError('Failed to load authentication configuration');
             });
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // Start initialization process
+            initializeGoogleSignIn();
         });
     </script>
 </body>
