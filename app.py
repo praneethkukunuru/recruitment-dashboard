@@ -28,6 +28,14 @@ from flask import Flask, render_template, request, jsonify, send_file, session, 
 import json
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
+
+# Firestore imports
+try:
+    from google.cloud import firestore
+    FIRESTORE_AVAILABLE = True
+except ImportError:
+    FIRESTORE_AVAILABLE = False
+    print("Warning: Firestore not available. Install google-cloud-firestore to enable Firestore storage.")
 import os
 import sqlite3
 import requests as req
@@ -77,6 +85,20 @@ DATA_DIR = get_data_dir()
 USE_FILE_STORAGE = True
 # Fallback to session storage if file storage fails
 USE_SESSION_FALLBACK = True
+# Use Firestore as primary storage (when available)
+USE_FIRESTORE = True
+
+# Initialize Firestore client (if available)
+if FIRESTORE_AVAILABLE and USE_FIRESTORE:
+    try:
+        db = firestore.Client()
+        print("Firestore client initialized successfully")
+    except Exception as e:
+        print(f"Failed to initialize Firestore client: {e}")
+        USE_FIRESTORE = False
+else:
+    USE_FIRESTORE = False
+    print("Firestore not available - using file/session storage")
 
 def ensure_dirs() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -102,24 +124,33 @@ def write_json(path: str, payload: dict) -> None:
         json.dump(payload, f, ensure_ascii=False)
 
 def safe_save_user_data(user_id: str, data_type: str, data: dict, data_category: str = 'recruitment') -> bool:
-    """Save user data with fallback to session if file storage fails"""
+    """Save user data with Firestore as primary storage, fallback to file/session"""
+    
+    # Try Firestore first (primary storage)
+    if USE_FIRESTORE and FIRESTORE_AVAILABLE:
+        if save_user_data_firestore(user_id, data_type, data, data_category):
+            return True
+        print("Firestore save failed, trying fallback storage...")
+    
+    # Fallback to file storage
     try:
         if USE_FILE_STORAGE:
             if data_category == 'recruitment':
                 save_user_recruitment_data_file(user_id, data_type, data)
             else:
                 save_user_finance_data_file(user_id, data_type, data)
+            print(f"Saved {data_type} data for user {user_id} to file storage (fallback)")
             return True
     except Exception as e:
         print(f"File storage failed: {e}")
     
-    # Fallback to session storage
+    # Final fallback to session storage
     if USE_SESSION_FALLBACK:
         try:
             session_key = f'{data_category}_processed_data'
             session[session_key] = data
             session.permanent = True
-            print(f"Saved {data_type} data for user {user_id} to session (fallback)")
+            print(f"Saved {data_type} data for user {user_id} to session (final fallback)")
             return True
         except Exception as e:
             print(f"Session storage also failed: {e}")
@@ -127,8 +158,16 @@ def safe_save_user_data(user_id: str, data_type: str, data: dict, data_category:
     return False
 
 def safe_load_user_data(user_id: str, data_type: str, data_category: str = 'recruitment') -> Optional[dict]:
-    """Load user data with fallback to session if file storage fails"""
-    # Try file storage first
+    """Load user data with Firestore as primary storage, fallback to file/session"""
+    
+    # Try Firestore first (primary storage)
+    if USE_FIRESTORE and FIRESTORE_AVAILABLE:
+        data = load_user_data_firestore(user_id, data_type, data_category)
+        if data is not None:
+            return data
+        print("Firestore load failed, trying fallback storage...")
+    
+    # Fallback to file storage
     if USE_FILE_STORAGE:
         try:
             if data_category == 'recruitment':
@@ -136,22 +175,124 @@ def safe_load_user_data(user_id: str, data_type: str, data_category: str = 'recr
             else:
                 data = load_user_finance_data_file(user_id, data_type)
             if data is not None:
+                print(f"Loaded {data_type} data for user {user_id} from file storage (fallback)")
                 return data
         except Exception as e:
             print(f"File storage load failed: {e}")
     
-    # Fallback to session storage
+    # Final fallback to session storage
     if USE_SESSION_FALLBACK:
         try:
             session_key = f'{data_category}_processed_data'
             data = session.get(session_key)
             if data:
-                print(f"Loaded {data_type} data for user {user_id} from session (fallback)")
+                print(f"Loaded {data_type} data for user {user_id} from session (final fallback)")
                 return data
         except Exception as e:
             print(f"Session storage load failed: {e}")
     
     return None
+
+# ==================== FIRESTORE STORAGE FUNCTIONS ====================
+
+def save_user_data_firestore(user_id: str, data_type: str, data: dict, data_category: str = 'recruitment') -> bool:
+    """Save user data to Firestore"""
+    if not FIRESTORE_AVAILABLE or not USE_FIRESTORE:
+        return False
+    
+    try:
+        # Clean data for JSON serialization
+        cleaned_data = clean_data_for_json(data)
+        
+        # Add metadata
+        cleaned_data['_metadata'] = {
+            'user_id': user_id,
+            'data_type': data_type,
+            'data_category': data_category,
+            'saved_at': datetime.now().isoformat(),
+            'version': '1.0'
+        }
+        
+        # Save to Firestore
+        doc_ref = db.collection('users').document(user_id).collection(data_category).document(data_type)
+        doc_ref.set(cleaned_data)
+        
+        print(f"✅ Saved {data_category} data for user {user_id} to Firestore")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Firestore save failed for user {user_id}: {e}")
+        return False
+
+def load_user_data_firestore(user_id: str, data_type: str, data_category: str = 'recruitment') -> Optional[dict]:
+    """Load user data from Firestore"""
+    if not FIRESTORE_AVAILABLE or not USE_FIRESTORE:
+        return None
+    
+    try:
+        doc_ref = db.collection('users').document(user_id).collection(data_category).document(data_type)
+        doc = doc_ref.get()
+        
+        if doc.exists:
+            data = doc.to_dict()
+            # Remove metadata before returning
+            if '_metadata' in data:
+                del data['_metadata']
+            print(f"✅ Loaded {data_category} data for user {user_id} from Firestore")
+            return data
+        else:
+            print(f"ℹ️ No {data_category} data found for user {user_id} in Firestore")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Firestore load failed for user {user_id}: {e}")
+        return None
+
+def save_user_profile_firestore(user_id: str, email: str, name: str, picture: str = None) -> bool:
+    """Save user profile to Firestore"""
+    if not FIRESTORE_AVAILABLE or not USE_FIRESTORE:
+        return False
+    
+    try:
+        profile_data = {
+            'user_id': user_id,
+            'email': email,
+            'name': name,
+            'picture': picture,
+            'created_at': datetime.now().isoformat(),
+            'last_login': datetime.now().isoformat()
+        }
+        
+        doc_ref = db.collection('users').document(user_id).collection('profile').document('main')
+        doc_ref.set(profile_data)
+        
+        print(f"✅ Saved profile for user {user_id} to Firestore")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Firestore profile save failed for user {user_id}: {e}")
+        return False
+
+def load_user_profile_firestore(user_id: str) -> Optional[dict]:
+    """Load user profile from Firestore"""
+    if not FIRESTORE_AVAILABLE or not USE_FIRESTORE:
+        return None
+    
+    try:
+        doc_ref = db.collection('users').document(user_id).collection('profile').document('main')
+        doc = doc_ref.get()
+        
+        if doc.exists:
+            profile_data = doc.to_dict()
+            print(f"✅ Loaded profile for user {user_id} from Firestore")
+            return profile_data
+        else:
+            print(f"ℹ️ No profile found for user {user_id} in Firestore")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Firestore profile load failed for user {user_id}: {e}")
+        return None
 
 # Custom JSON encoder to handle datetime objects
 class DateTimeEncoder(json.JSONEncoder):
@@ -207,7 +348,15 @@ def load_user(user_id):
         return None
 
 def save_user_profile_file(user_id, email, name, picture=None):
-    """Save user profile to file storage."""
+    """Save user profile with Firestore as primary storage, fallback to file storage."""
+    
+    # Try Firestore first
+    if USE_FIRESTORE and FIRESTORE_AVAILABLE:
+        if save_user_profile_firestore(user_id, email, name, picture):
+            return
+        print("Firestore profile save failed, using file storage fallback...")
+    
+    # Fallback to file storage
     profile_data = {
         'user_id': user_id,
         'email': email,
@@ -218,14 +367,25 @@ def save_user_profile_file(user_id, email, name, picture=None):
     }
     path = os.path.join(user_dir(user_id), 'profile.json')
     write_json(path, profile_data)
-    print(f"Saved profile for user {user_id} to file storage")
+    print(f"Saved profile for user {user_id} to file storage (fallback)")
 
 def load_user_file(user_id):
-    """Load user from file storage."""
+    """Load user with Firestore as primary storage, fallback to file storage."""
+    
+    # Try Firestore first
+    if USE_FIRESTORE and FIRESTORE_AVAILABLE:
+        profile_data = load_user_profile_firestore(user_id)
+        if profile_data:
+            return User(profile_data.get('user_id'), profile_data.get('email'), 
+                       profile_data.get('name'), profile_data.get('picture'))
+        print("Firestore profile load failed, trying file storage fallback...")
+    
+    # Fallback to file storage
     ensure_dirs()
     profile_path = os.path.join(user_dir(user_id), 'profile.json')
     data = read_json(profile_path)
     if data:
+        print(f"Loaded profile for user {user_id} from file storage (fallback)")
         return User(data.get('user_id'), data.get('email'), data.get('name'), data.get('picture'))
     return None
 

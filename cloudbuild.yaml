@@ -28,7 +28,9 @@ steps:
       - '--max-instances'
       - '10'
       - '--set-env-vars'
-      - 'FLASK_ENV=production,PORT=8080'
+      - 'FLASK_ENV=production,PORT=8080,GOOGLE_CLOUD_PROJECT=$PROJECT_ID'
+      - '--service-account'
+      - 'recruitment-dashboard-sa@$PROJECT_ID.iam.gserviceaccount.com'
 
 images:
   - 'gcr.io/$PROJECT_ID/recruitment-dashboard:$COMMIT_SHA'

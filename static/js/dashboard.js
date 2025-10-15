@@ -83,10 +83,6 @@ function showFinanceDashboardAfterUpload() {
     console.log('Showing finance sections...');
     $('#finance-dashboard .section').show();
     
-    // Update Data Explorer with new finance data
-    console.log('Updating Data Explorer with finance data...');
-    loadDataExplorerData();
-    
     console.log('Finance dashboard UI update complete');
 }
 
@@ -495,335 +491,21 @@ function showNotification(message, type = 'info') {
     });
 }
 
-// Data Explorer Functions
-let currentDataSource = 'recruitment';
-let recruitmentData = null;
-let financeData = null;
 
-// Initialize Data Explorer
-function initializeDataExplorer() {
-    console.log('=== INITIALIZING DATA EXPLORER ===');
-    
-    // Set up event listeners
-    setupDataExplorerEventListeners();
-    
-    // Update data status indicators
-    updateDataStatusIndicators();
-    
-    // Load initial data
-    loadDataExplorerData();
-}
 
-// Set up event listeners for Data Explorer
-function setupDataExplorerEventListeners() {
-    // Search functionality
-    $('#recruitment-search').on('input', function() {
-        filterRecruitmentData($(this).val());
-    });
-    
-    $('#finance-search').on('input', function() {
-        filterFinanceData($(this).val());
-    });
-}
 
-// Switch data source in Data Explorer
-function switchDataSource(source) {
-    console.log('=== SWITCHING DATA SOURCE ===', source);
-    
-    currentDataSource = source;
-    
-    // Update tab buttons
-    $('.data-tab-btn').removeClass('active');
-    $(`#tab-${source}`).addClass('active');
-    
-    // Update content visibility
-    $('.data-source-content').removeClass('active').hide();
-    $(`#content-${source}`).addClass('active').show();
-    
-    // Load data for the selected source
-    loadDataForSource(source);
-}
 
-// Load data for specific source
-function loadDataForSource(source) {
-    if (source === 'recruitment') {
-        loadRecruitmentDataTables();
-    } else if (source === 'finance') {
-        loadFinanceDataTables();
-    }
-}
 
-// Update data status indicators
-function updateDataStatusIndicators() {
-    console.log('=== UPDATING DATA STATUS INDICATORS ===');
-    
-    // Check recruitment data from localStorage
-    const hasRecruitmentData = !!localStorage.getItem('recruitmentData');
-    console.log('Has recruitment data in localStorage:', hasRecruitmentData);
-    $('#status-recruitment').text(hasRecruitmentData ? 'Data Available' : 'No Data')
-                           .toggleClass('has-data', hasRecruitmentData);
-    
-    // Check finance data from localStorage
-    const hasFinanceData = !!localStorage.getItem('financeData');
-    console.log('Has finance data in localStorage:', hasFinanceData);
-    $('#status-finance').text(hasFinanceData ? 'Data Available' : 'No Data')
-                        .toggleClass('has-data', hasFinanceData);
-}
 
-// Load Data Explorer data
-function loadDataExplorerData() {
-    console.log('=== LOADING DATA EXPLORER DATA ===');
-    console.log('All localStorage keys:', Object.keys(localStorage));
-    
-    // Get data directly from localStorage
-    const recruitmentDataStr = localStorage.getItem('recruitmentData');
-    const financeDataStr = localStorage.getItem('financeData');
-    
-    console.log('Recruitment data string length:', recruitmentDataStr ? recruitmentDataStr.length : 0);
-    console.log('Finance data string length:', financeDataStr ? financeDataStr.length : 0);
-    
-    if (recruitmentDataStr) {
-        try {
-            recruitmentData = JSON.parse(recruitmentDataStr);
-            window.recruitmentData = recruitmentData; // Also set global variable
-            console.log('Found recruitment data in localStorage:', recruitmentData);
-            console.log('Recruitment data keys:', Object.keys(recruitmentData));
-            console.log('Sheet1 data exists:', !!recruitmentData.sheet1_data);
-            console.log('Sheet2 data exists:', !!recruitmentData.sheet2_data);
-            if (recruitmentData.sheet1_data) {
-                console.log('Sheet1 data keys:', Object.keys(recruitmentData.sheet1_data));
-            }
-            if (recruitmentData.sheet2_data) {
-                console.log('Sheet2 data keys:', Object.keys(recruitmentData.sheet2_data));
-            }
-        } catch (e) {
-            console.error('Error parsing recruitment data from localStorage:', e);
-        }
-    } else {
-        console.log('No recruitment data found in localStorage');
-    }
-    
-    if (financeDataStr) {
-        try {
-            financeData = JSON.parse(financeDataStr);
-            window.financeData = financeData; // Also set global variable
-            console.log('Found finance data in localStorage:', financeData);
-            console.log('Finance data keys:', Object.keys(financeData));
-        } catch (e) {
-            console.error('Error parsing finance data from localStorage:', e);
-        }
-    } else {
-        console.log('No finance data found in localStorage');
-    }
-    
-    // Update status indicators
-    updateDataStatusIndicators();
-    
-    // Load initial data for current source
-    loadDataForSource(currentDataSource);
-}
 
-// Load recruitment data tables
-function loadRecruitmentDataTables() {
-    console.log('=== LOADING RECRUITMENT DATA TABLES ===');
-    console.log('Recruitment data:', recruitmentData);
-    
-    if (!recruitmentData) {
-        console.log('No recruitment data available');
-        return;
-    }
-    
-    console.log('Recruitment data keys:', Object.keys(recruitmentData));
-    console.log('Sheet1 data:', recruitmentData.sheet1_data);
-    console.log('Sheet2 data:', recruitmentData.sheet2_data);
-    console.log('Sheet3 data:', recruitmentData.sheet3_data);
-    
-    // Check if we have the expected data structure
-    if (!recruitmentData.sheet1_data || !recruitmentData.sheet2_data) {
-        console.log('Recruitment data missing expected sheet structure');
-        console.log('Available keys:', Object.keys(recruitmentData));
-        return;
-    }
-    
-    // Load employment types data
-    loadEmploymentTypesTable();
-    
-    // Load placement metrics data
-    loadPlacementMetricsTable();
-}
 
-// Load employment types table
-function loadEmploymentTypesTable() {
-    const table = $('#recruitment-employment-table tbody');
-    table.empty();
-    
-    if (recruitmentData.sheet1_data && recruitmentData.sheet1_data.tg_data) {
-        const months = recruitmentData.sheet1_data.months || ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
-        const tgData = recruitmentData.sheet1_data.tg_data;
-        
-        months.forEach((month, index) => {
-            const row = `
-                <tr>
-                    <td>${month}</td>
-                    <td>${tgData['TG W2'] ? tgData['TG W2'][index] || 0 : 0}</td>
-                    <td>${tgData['TG C2C'] ? tgData['TG C2C'][index] || 0 : 0}</td>
-                    <td>${tgData['TG 1099'] ? tgData['TG 1099'][index] || 0 : 0}</td>
-                    <td>${tgData['TG Referral'] ? tgData['TG Referral'][index] || 0 : 0}</td>
-                </tr>
-            `;
-            table.append(row);
-        });
-    } else {
-        table.append('<tr><td colspan="5" style="text-align: center; color: #666;">No employment data available</td></tr>');
-    }
-}
 
-// Load placement metrics table
-function loadPlacementMetricsTable() {
-    const table = $('#recruitment-placements-table tbody');
-    table.empty();
-    
-    if (recruitmentData.sheet2_data && recruitmentData.sheet2_data.placement_metrics) {
-        const months = recruitmentData.sheet2_data.months || ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
-        const metrics = recruitmentData.sheet2_data.placement_metrics;
-        
-        months.forEach((month, index) => {
-            const row = `
-                <tr>
-                    <td>${month}</td>
-                    <td>${metrics['New Placements'] ? metrics['New Placements'][index] || 0 : 0}</td>
-                    <td>${metrics['Terminations'] ? metrics['Terminations'][index] || 0 : 0}</td>
-                    <td>${metrics['Net Placements'] ? metrics['Net Placements'][index] || 0 : 0}</td>
-                    <td>${metrics['Net billables'] ? metrics['Net billables'][index] || 0 : 0}</td>
-                </tr>
-            `;
-            table.append(row);
-        });
-    } else {
-        table.append('<tr><td colspan="5" style="text-align: center; color: #666;">No placement data available</td></tr>');
-    }
-}
 
-// Load finance data tables
-function loadFinanceDataTables() {
-    console.log('=== LOADING FINANCE DATA TABLES ===');
-    
-    if (!financeData) {
-        console.log('No finance data available');
-        return;
-    }
-    
-    // Load business units summary
-    loadBusinessUnitsTable();
-    
-    // Load P&L data
-    loadPnLTable();
-}
 
-// Load business units summary table
-function loadBusinessUnitsTable() {
-    const table = $('#finance-summary-table tbody');
-    table.empty();
-    
-    if (financeData.processed_data && financeData.processed_data.business_units) {
-        const businessUnits = financeData.processed_data.business_units;
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
-        
-        Object.keys(businessUnits).forEach(unitName => {
-            const unitData = businessUnits[unitName];
-            const revenue = unitData.revenue || [];
-            
-            const row = `
-                <tr>
-                    <td><strong>${unitName}</strong></td>
-                    ${months.map((_, index) => `<td>${revenue[index] ? revenue[index].toLocaleString() : 0}</td>`).join('')}
-                </tr>
-            `;
-            table.append(row);
-        });
-    } else {
-        table.append('<tr><td colspan="9" style="text-align: center; color: #666;">No business units data available</td></tr>');
-    }
-}
 
-// Load P&L table
-function loadPnLTable() {
-    const table = $('#finance-pnl-table tbody');
-    table.empty();
-    
-    if (financeData.processed_data && financeData.processed_data.monthly_data) {
-        const monthlyData = financeData.processed_data.monthly_data;
-        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug'];
-        
-        Object.keys(monthlyData).forEach(companyName => {
-            const companyData = monthlyData[companyName];
-            const income = companyData.total_income || [];
-            const expenses = companyData.total_expense || [];
-            const netIncome = companyData.net_income || [];
-            
-            months.forEach((month, index) => {
-                const row = `
-                    <tr>
-                        <td>${companyName}</td>
-                        <td>${month}</td>
-                        <td>${income[index] ? income[index].toLocaleString() : 0}</td>
-                        <td>${expenses[index] ? expenses[index].toLocaleString() : 0}</td>
-                        <td>${netIncome[index] ? netIncome[index].toLocaleString() : 0}</td>
-                    </tr>
-                `;
-                table.append(row);
-            });
-        });
-    } else {
-        table.append('<tr><td colspan="5" style="text-align: center; color: #666;">No P&L data available</td></tr>');
-    }
-}
 
-// Filter recruitment data
-function filterRecruitmentData(searchTerm) {
-    const tables = ['#recruitment-employment-table', '#recruitment-placements-table'];
-    
-    tables.forEach(tableId => {
-        const table = $(tableId);
-        const rows = table.find('tbody tr');
-        
-        rows.each(function() {
-            const row = $(this);
-            const text = row.text().toLowerCase();
-            const matches = text.includes(searchTerm.toLowerCase());
-            row.toggle(matches);
-        });
-    });
-}
 
-// Filter finance data
-function filterFinanceData(searchTerm) {
-    const tables = ['#finance-summary-table', '#finance-pnl-table'];
-    
-    tables.forEach(tableId => {
-        const table = $(tableId);
-        const rows = table.find('tbody tr');
-        
-        rows.each(function() {
-            const row = $(this);
-            const text = row.text().toLowerCase();
-            const matches = text.includes(searchTerm.toLowerCase());
-            row.toggle(matches);
-        });
-    });
-}
 
-// Clear recruitment search
-function clearRecruitmentSearch() {
-    $('#recruitment-search').val('');
-    filterRecruitmentData('');
-}
-
-// Clear finance search
-function clearFinanceSearch() {
-    $('#finance-search').val('');
-    filterFinanceData('');
-}
 
 // Export recruitment data
 function exportRecruitmentData() {
@@ -940,7 +622,6 @@ function downloadCSV(content, filename) {
 function getCurrentDashboard() {
     const financeDashboard = document.getElementById('finance-dashboard');
     const recruitmentDashboard = document.getElementById('recruitment-dashboard');
-    const dataExplorerDashboard = document.getElementById('data-explorer-dashboard');
     
     // Check if finance dashboard is visible
     if (financeDashboard && financeDashboard.style.display !== 'none' && financeDashboard.style.display !== '') {
@@ -950,11 +631,6 @@ function getCurrentDashboard() {
     // Check if recruitment dashboard is visible
     if (recruitmentDashboard && recruitmentDashboard.style.display !== 'none' && recruitmentDashboard.style.display !== '') {
         return 'recruitment';
-    }
-    
-    // Check if data explorer dashboard is visible
-    if (dataExplorerDashboard && dataExplorerDashboard.style.display !== 'none' && dataExplorerDashboard.style.display !== '') {
-        return 'data-explorer';
     }
     
     // If neither is visible, check which one has data and default to that
@@ -983,6 +659,10 @@ function restoreDashboardFromData(response) {
         
         // Store recruitment data globally
         window.recruitmentData = data;
+        
+        // Store in localStorage for consistency with frontend expectations
+        localStorage.setItem('recruitmentData', JSON.stringify(data));
+        console.log('✅ Stored recruitment data in localStorage');
         
         // Update KPIs
         if (data.kpis) {
@@ -1035,6 +715,10 @@ function restoreDashboardFromData(response) {
         
         // Store finance data globally
         window.financeData = data;
+        
+        // Store in localStorage for consistency with frontend expectations
+        localStorage.setItem('financeData', JSON.stringify(data));
+        console.log('✅ Stored finance data in localStorage');
         
         // Update KPIs
         if (data.kpis) {
@@ -1091,10 +775,6 @@ function restoreDashboardFromData(response) {
     
     // Mark upload areas as having existing data
     markUploadAreasWithExistingData();
-    
-    // Update Data Explorer with restored data
-    console.log('Updating Data Explorer with restored data...');
-    loadDataExplorerData();
 }
 
 
@@ -1181,9 +861,6 @@ $(document).ready(function() {
     
     // Initialize formula customization (OLD SYSTEM - DISABLED)
     // initializeFormulaCustomization();
-    
-    // Initialize data explorer
-    initializeDataExplorer();
     
     // File upload handling
     setupFileUploads();
@@ -1557,10 +1234,6 @@ function showDashboardAfterUpload() {
         mainContent.classList.remove('finance-mode');
         mainContent.classList.add('recruitment-mode');
     }
-    
-    // Update Data Explorer with new recruitment data
-    console.log('Updating Data Explorer with recruitment data...');
-    loadDataExplorerData();
 }
 
 function toggleDataSidebar() {
